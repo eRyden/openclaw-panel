@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Atom Control Center</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Inter Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="/css/styles.css">
+  
+  <style>
+    * { font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif; }
+    .font-mono, code, pre, .stat-value { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+    body { background: #0f1729; }
+  </style>
+</head>
+<body class="text-slate-100">
+  
+  <!-- Sidebar -->
+  <aside id="sidebar" class="fixed left-0 top-0 h-screen w-60 bg-slate-900 border-r border-slate-700 flex flex-col z-50 transform transition-transform duration-300 lg:translate-x-0">
+    <!-- Logo & Gateway Status -->
+    <div class="p-5 border-b border-slate-700">
+      <div class="flex items-center gap-3 mb-4">
+        <i data-lucide="atom" class="w-8 h-8 text-cyan-400"></i>
+        <div>
+          <h1 class="text-xl font-bold text-white">Atom</h1>
+          <p class="text-xs text-slate-400">Control Center</p>
+        </div>
+      </div>
+      
+      <!-- Gateway Status -->
+      <div id="sidebar-gateway-status" class="bg-slate-800/50 rounded-lg p-3">
+        <div class="flex items-center gap-2 mb-2">
+          <div id="gateway-status-dot" class="w-2.5 h-2.5 rounded-full bg-green-500"></div>
+          <span id="gateway-status-text" class="text-sm font-medium text-slate-200">Gateway Running</span>
+        </div>
+        <div class="text-xs text-slate-400">
+          Uptime: <span id="gateway-uptime" class="text-slate-300">-</span> | <span id="gateway-version" class="text-slate-300 font-mono">-</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Navigation -->
+    <nav class="flex-1 p-4 overflow-y-auto">
+      <a href="#dashboard" data-page="dashboard" class="nav-link active">
+        <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
+        <span>Dashboard</span>
+      </a>
+      <a href="#usage" data-page="usage" class="nav-link">
+        <i data-lucide="dollar-sign" class="w-5 h-5"></i>
+        <span>Usage</span>
+      </a>
+      <a href="#logs" data-page="logs" class="nav-link">
+        <i data-lucide="scroll-text" class="w-5 h-5"></i>
+        <span>Live Logs</span>
+      </a>
+      <a href="#actions" data-page="actions" class="nav-link">
+        <i data-lucide="zap" class="w-5 h-5"></i>
+        <span>Actions</span>
+      </a>
+      <a href="#cron" data-page="cron" class="nav-link">
+        <i data-lucide="clock" class="w-5 h-5"></i>
+        <span>Cron Jobs</span>
+      </a>
+      <a href="#projects" data-page="projects" class="nav-link">
+        <i data-lucide="kanban" class="w-5 h-5"></i>
+        <span>Projects</span>
+      </a>
+    </nav>
+    
+    <!-- Logout -->
+    <div class="p-4 border-t border-slate-700">
+      <a href="/logout" class="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors">
+        <i data-lucide="log-out" class="w-5 h-5"></i>
+        <span>Logout</span>
+      </a>
+    </div>
+  </aside>
+  
+  <!-- Mobile Menu Toggle -->
+  <button id="mobile-menu-toggle" class="lg:hidden fixed top-4 left-4 z-50 bg-slate-800 p-2 rounded-lg text-white">
+    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+    </svg>
+  </button>
+  
+  <!-- Main Content -->
+  <main id="main-content" class="lg:ml-60 min-h-screen">
+    
+    <!-- Dashboard Page -->
+    <div id="page-dashboard" class="page active">
+      <div class="p-6 lg:p-8">
+        <h2 class="text-3xl font-bold mb-2">Dashboard</h2>
+        <p class="text-slate-400 mb-8">System overview and status</p>
+        
+        <!-- Top Stat Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <!-- CPU Card -->
+          <div class="stat-card">
+            <div class="stat-icon"><i data-lucide="cpu" class="w-8 h-8"></i></div>
+            <div class="stat-value" id="cpu-percent">-</div>
+            <div class="stat-label">CPU Usage</div>
+            <div class="stat-subtitle" id="cpu-subtitle">-</div>
+          </div>
+          
+          <!-- RAM Card -->
+          <div class="stat-card">
+            <div class="stat-icon"><i data-lucide="memory-stick" class="w-8 h-8"></i></div>
+            <div class="stat-value" id="ram-percent">-</div>
+            <div class="stat-label">RAM Usage</div>
+            <div class="stat-subtitle" id="ram-subtitle">-</div>
+          </div>
+          
+          <!-- Disk Card -->
+          <div class="stat-card">
+            <div class="stat-icon"><i data-lucide="hard-drive" class="w-8 h-8"></i></div>
+            <div class="stat-value" id="disk-percent">-</div>
+            <div class="stat-label">Disk Usage</div>
+            <div class="stat-subtitle" id="disk-subtitle">-</div>
+          </div>
+          
+          <!-- Uptime Card -->
+          <div class="stat-card">
+            <div class="stat-icon"><i data-lucide="timer" class="w-8 h-8"></i></div>
+            <div class="stat-value" id="uptime-value">-</div>
+            <div class="stat-label">System Uptime</div>
+            <div class="stat-subtitle">Since last reboot</div>
+          </div>
+        </div>
+        
+        <!-- Charts Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <!-- CPU Chart -->
+          <div class="card">
+            <h3 class="text-lg font-medium text-slate-300 mb-4">CPU History (30 min)</h3>
+            <canvas id="cpu-chart"></canvas>
+          </div>
+          
+          <!-- RAM Chart -->
+          <div class="card">
+            <h3 class="text-lg font-medium text-slate-300 mb-4">RAM History (30 min)</h3>
+            <canvas id="ram-chart"></canvas>
+          </div>
+        </div>
+        
+        <!-- Sessions + Sub-Agents Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- Active Sessions -->
+          <div class="card">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-lg font-medium text-slate-300">Active Sessions</h3>
+              <span id="sessions-badge" class="badge-success">0 Active</span>
+            </div>
+            <div id="sessions-list" class="space-y-2 max-h-72 overflow-y-auto">
+              <div class="text-slate-500 text-center py-4">Loading...</div>
+            </div>
+          </div>
+          
+          <!-- Active Sub-Agents -->
+          <div class="card">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-lg font-medium text-slate-300">Active Sub-Agents</h3>
+              <span id="subagents-badge" class="badge-warning">0 Active</span>
+            </div>
+            <div id="subagents-list" class="space-y-2 max-h-72 overflow-y-auto">
+              <div class="text-slate-500 text-center py-4">Loading...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Usage Page -->
+    <div id="page-usage" class="page">
+      <div class="p-6 lg:p-8">
+        <h2 class="text-3xl font-bold mb-2">Usage</h2>
+        <p class="text-slate-400 mb-8">Cost and token analytics</p>
+        
+        <!-- Top Stat Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div class="stat-card">
+            <div class="stat-icon"><i data-lucide="calendar-days" class="w-8 h-8"></i></div>
+            <div class="stat-value" id="usage-today">$0.00</div>
+            <div class="stat-label">Today's Cost</div>
+          </div>
+          
+          <div class="stat-card">
+            <div class="stat-icon"><i data-lucide="bar-chart-3" class="w-8 h-8"></i></div>
+            <div class="stat-value" id="usage-week">$0.00</div>
+            <div class="stat-label">This Week</div>
+          </div>
+          
+          <div class="stat-card">
+            <div class="stat-icon"><i data-lucide="wallet" class="w-8 h-8"></i></div>
+            <div class="stat-value" id="usage-month">$0.00</div>
+            <div class="stat-label">This Month</div>
+          </div>
+        </div>
+        
+        <!-- Charts -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <div class="card">
+            <h3 class="text-lg font-medium text-slate-300 mb-4">Cost Over Time (30 days)</h3>
+            <canvas id="cost-chart"></canvas>
+          </div>
+          
+          <div class="card">
+            <h3 class="text-lg font-medium text-slate-300 mb-4">Model Breakdown</h3>
+            <div style="height: 280px;"><canvas id="model-chart"></canvas></div>
+          </div>
+        </div>
+        
+        <div class="card">
+          <h3 class="text-lg font-medium text-slate-300 mb-4">Token Usage</h3>
+          <canvas id="token-chart"></canvas>
+        </div>
+        
+        <!-- Top Sessions -->
+        <div class="mt-8">
+          <div class="card">
+            <h3 class="text-lg font-medium text-slate-300 mb-4">Top Sessions by Cost</h3>
+            <div id="top-sessions-list" class="space-y-2">
+              <div class="text-slate-500 text-center py-4">No data available</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Live Logs Page -->
+    <div id="page-logs" class="page">
+      <div class="p-6 lg:p-8">
+        <div class="flex items-center justify-between mb-6">
+          <div>
+            <h2 class="text-3xl font-bold mb-2">Live Logs</h2>
+            <div class="flex items-center gap-2">
+              <div id="log-stream-dot" class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+              <span id="log-stream-status" class="text-slate-400 text-sm">STREAMING</span>
+            </div>
+          </div>
+          <div class="flex gap-3">
+            <button id="pause-logs" class="btn-secondary">Pause</button>
+            <button id="export-logs" class="btn-secondary">Export</button>
+          </div>
+        </div>
+        
+        <!-- Search & Filters -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+          <input type="text" id="log-search" placeholder="Search logs..." class="input-field">
+          <select id="log-level-filter" class="input-field">
+            <option value="">All Levels</option>
+            <option value="INFO">INFO</option>
+            <option value="WARN">WARN</option>
+            <option value="ERROR">ERROR</option>
+            <option value="DEBUG">DEBUG</option>
+          </select>
+        </div>
+        
+        <!-- Log Viewer -->
+        <div class="card bg-slate-950 p-4 font-mono text-sm h-96 overflow-y-auto" id="log-viewer">
+          <div class="text-slate-500">Connecting to log stream...</div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Actions Page -->
+    <div id="page-actions" class="page">
+      <div class="p-6 lg:p-8">
+        <h2 class="text-3xl font-bold mb-2">Actions</h2>
+        <p class="text-slate-400 mb-8">Quick system actions and PM2 management</p>
+        
+        <!-- Action Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          <!-- Restart Gateway -->
+          <div class="card">
+            <div class="text-4xl mb-4"><i data-lucide="refresh-cw" class="w-10 h-10 text-slate-400"></i></div>
+            <h3 class="text-xl font-semibold mb-2">Restart Gateway</h3>
+            <p class="text-slate-400 text-sm mb-4">Full process restart. Will drop connections.</p>
+            <button onclick="window.actions.restartGateway()" class="btn-danger w-full">Execute</button>
+          </div>
+          
+          <!-- Safe Reload -->
+          <div class="card">
+            <div class="text-4xl mb-4"><i data-lucide="rotate-ccw" class="w-10 h-10 text-slate-400"></i></div>
+            <h3 class="text-xl font-semibold mb-2">Safe Reload</h3>
+            <p class="text-slate-400 text-sm mb-4">Reload config without dropping connections.</p>
+            <button onclick="window.actions.safeReload()" class="btn-success w-full">Run</button>
+          </div>
+          
+          <!-- Clear Cache -->
+          <div class="card">
+            <div class="text-4xl mb-4"><i data-lucide="trash-2" class="w-10 h-10 text-slate-400"></i></div>
+            <h3 class="text-xl font-semibold mb-2">Clear Cache</h3>
+            <p class="text-slate-400 text-sm mb-4">Flush internal caches.</p>
+            <button onclick="window.actions.clearCache()" class="btn-secondary w-full">Run</button>
+          </div>
+          
+          <!-- Run Backup -->
+          <div class="card">
+            <div class="text-4xl mb-4"><i data-lucide="archive" class="w-10 h-10 text-slate-400"></i></div>
+            <h3 class="text-xl font-semibold mb-2">Run Backup</h3>
+            <p class="text-slate-400 text-sm mb-4">Backup workspace to Atombox (Dropbox).</p>
+            <button onclick="window.actions.runBackup()" class="btn-secondary w-full">Run</button>
+          </div>
+        </div>
+        
+        <!-- Output Console -->
+        <div class="card mb-8">
+          <h3 class="text-lg font-medium text-slate-300 mb-4">Output Console</h3>
+          <div id="action-console" class="bg-slate-950 p-4 rounded-lg font-mono text-sm h-48 overflow-y-auto">
+            <div class="text-slate-500">Ready for commands...</div>
+          </div>
+        </div>
+        
+        <!-- PM2 Processes -->
+        <div class="card">
+          <h3 class="text-lg font-medium text-slate-300 mb-4">PM2 Processes</h3>
+          <div id="pm2-processes-list" class="space-y-2">
+            <div class="text-slate-500 text-center py-4">Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Cron Jobs Page -->
+    <div id="page-cron" class="page">
+      <div class="p-6 lg:p-8">
+        <h2 class="text-3xl font-bold mb-2">Cron Jobs</h2>
+        <p class="text-slate-400 mb-8">Scheduled task management</p>
+        
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div class="stat-card">
+            <div class="stat-value" id="cron-total">0</div>
+            <div class="stat-label">Total Jobs</div>
+          </div>
+          
+          <div class="stat-card">
+            <div class="stat-value text-green-400" id="cron-active">0</div>
+            <div class="stat-label">Active</div>
+          </div>
+          
+          <div class="stat-card">
+            <div class="stat-value text-cyan-400" id="cron-next">-</div>
+            <div class="stat-label">Next Run</div>
+          </div>
+        </div>
+        
+        <!-- Jobs List -->
+        <div id="cron-jobs-list" class="space-y-4">
+          <div class="text-slate-500 text-center py-8">Loading...</div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Projects Page -->
+    <div id="page-projects" class="page">
+      <div class="p-6 lg:p-8">
+        <h2 class="text-3xl font-bold mb-2">Projects</h2>
+        <p class="text-slate-400 mb-8">Task management and kanban boards</p>
+        
+        <!-- Project Selector -->
+        <div class="mb-6">
+          <div id="project-tabs" class="flex gap-2 flex-wrap">
+            <!-- Populated by projects.js -->
+          </div>
+        </div>
+        
+        <!-- Kanban Board -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- To Do Column -->
+          <div class="kanban-column">
+            <div class="kanban-header">
+              <h3>TO DO</h3>
+              <span id="todo-count" class="badge-secondary">0</span>
+            </div>
+            <div id="todo-column" class="kanban-list">
+              <div class="text-slate-500 text-center py-4">Loading...</div>
+            </div>
+          </div>
+          
+          <!-- In Progress Column -->
+          <div class="kanban-column">
+            <div class="kanban-header">
+              <h3>IN PROGRESS</h3>
+              <span id="inprogress-count" class="badge-secondary">0</span>
+            </div>
+            <div id="inprogress-column" class="kanban-list">
+              <div class="text-slate-500 text-center py-4">Loading...</div>
+            </div>
+          </div>
+          
+          <!-- Done Column -->
+          <div class="kanban-column">
+            <div class="kanban-header">
+              <h3>DONE</h3>
+              <span id="done-count" class="badge-secondary">0</span>
+            </div>
+            <div id="done-column" class="kanban-list">
+              <div class="text-slate-500 text-center py-4">Loading...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+  </main>
+  
+  <!-- Scripts -->
+  <script src="/js/app.js"></script>
+  <script src="/js/charts.js"></script>
+  <script src="/js/dashboard.js"></script>
+  <script src="/js/usage.js"></script>
+  <script src="/js/logs.js"></script>
+  <script src="/js/actions.js"></script>
+  <script src="/js/cron.js"></script>
+  <script src="/js/projects.js"></script>
+  
+</body>
+</html>
