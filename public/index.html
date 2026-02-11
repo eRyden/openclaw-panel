@@ -380,6 +380,20 @@
           </div>
         </div>
         
+        <!-- Action Buttons -->
+        <div class="mb-6 flex gap-3">
+          <button onclick="window.projects.showAddProjectModal()" 
+                  class="px-4 py-2 rounded-lg font-medium text-sm transition-all flex items-center gap-2 border border-slate-600 text-slate-300 hover:bg-slate-800 hover:border-slate-500">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            New Project
+          </button>
+          <button onclick="window.projects.showAddTaskModal()" 
+                  class="px-5 py-2.5 rounded-lg font-medium text-sm transition-all flex items-center gap-2 bg-blue-500 text-white hover:bg-blue-600">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            Add Task
+          </button>
+        </div>
+        
         <!-- Kanban Board -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <!-- To Do Column -->
@@ -415,6 +429,10 @@
             </div>
           </div>
         </div>
+        
+        <!-- Toast Container -->
+        <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2"></div>
+        
       </div>
     </div>
     
