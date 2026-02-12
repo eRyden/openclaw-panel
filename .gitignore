@@ -4,6 +4,9 @@ config.json
 .worktrees/
 *.log
 
+# Personal assets (replace with your own)
+public/assets/
+
 # Personal documentation files
 REBUILD-SPEC.md
 REBUILD-COMPLETE.md
