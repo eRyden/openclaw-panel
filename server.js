@@ -1,15 +1,30 @@
+require('dotenv').config();
 const express = require('express');
 const { exec, spawn } = require('child_process');
 const path = require('path');
 const session = require('express-session');
+const fs = require('fs');
+const crypto = require('crypto');
+
+// Load config.json with fallback to defaults
+let config = {};
+try {
+  config = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
+} catch {
+  // Config file not found or invalid, use defaults
+}
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-// Credentials
-const AUTH_USER = 'erik';
-const AUTH_PASS = 'AtomHQ2026!';
-const SESSION_SECRET = 'atom-hq-secret-2026-stable';
+// Credentials from environment variables
+const AUTH_USER = process.env.AUTH_USER || 'admin';
+const AUTH_PASS = process.env.AUTH_PASS || 'changeme';
+const SESSION_SECRET = process.env.SESSION_SECRET || 'openclaw-panel-' + Date.now();
+
+// Panel configuration
+const PANEL_NAME = config.panelName || process.env.PANEL_NAME || 'Control Center';
+const PANEL_ICON = config.panelIcon || process.env.PANEL_ICON || 'atom';
 
 // Middleware
 app.use(express.json());
@@ -28,7 +43,6 @@ app.use(session({
 app.use('/assets', express.static(path.join(__dirname, 'public/assets')));
 
 // Login page
-const fs = require('fs');
 const loginHtml = fs.readFileSync(path.join(__dirname, 'public', 'login.html'), 'utf8');
 
 app.get('/login', (req, res) => {
@@ -66,6 +80,15 @@ function requireAuth(req, res, next) {
   }
 }
 
+// Serve index.html with dynamic panel name
+app.get('/', requireAuth, (req, res) => {
+  const indexHtml = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+  const dynamicHtml = indexHtml
+    .replace(/{{PANEL_NAME}}/g, PANEL_NAME)
+    .replace(/{{PANEL_ICON}}/g, PANEL_ICON);
+  res.type('html').send(dynamicHtml);
+});
+
 // Protected static files
 app.use(requireAuth, express.static(path.join(__dirname, 'public')));
 
@@ -102,15 +125,8 @@ function setCache(key, data) {
   cache.ts[key] = Date.now();
 }
 
-// Discord channel ID to name mapping
-const CHANNEL_NAMES = {
-  '1469649078832074843': '#general',
-  '1469649110981152881': '#trading',
-  '1469649111904157901': '#primortal',
-  '1469649112780636171': '#coding',
-  '1469649113946787881': '#config',
-  '1470844960667336766': '#socials'
-};
+// Discord channel ID to name mapping (from config.json)
+const CHANNEL_NAMES = config.discordChannels || {};
 
 // Legacy topic name mapping (deprecated)
 const TOPIC_NAMES = {
@@ -516,7 +532,7 @@ app.post('/api/cache/clear', requireAuth, async (req, res) => {
 // Trigger backup
 app.post('/api/backup', requireAuth, async (req, res) => {
   try {
-    const backupScript = '/root/.openclaw/workspace/backup-to-atombox.sh';
+    const backupScript = config.backupCommand || '/root/.openclaw/workspace/backup-to-atombox.sh';
     const result = await new Promise((resolve, reject) => {
       exec(`"${backupScript}"`, { timeout: 120000 }, (error, stdout, stderr) => {
         if (error) {
@@ -667,13 +683,14 @@ app.post('/api/tasks/:projectId', requireAuth, async (req, res) => {
       ? Math.max(...todoTasks.map(t => t.order)) 
       : -1;
     
+    const validAssignees = config.taskAssignees || ['agent', 'user'];
     const newTask = {
       id: crypto.randomUUID(),
       title: title.trim(),
       description: description ? description.trim() : '',
       status: 'todo',
       priority: ['high', 'medium', 'low'].includes(priority) ? priority : 'medium',
-      assignee: ['atom', 'erik'].includes(assignee) ? assignee : 'atom',
+      assignee: validAssignees.includes(assignee) ? assignee : validAssignees[0],
       order: maxOrder + 1,
       createdAt: now,
       updatedAt: now

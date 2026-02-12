@@ -1,110 +1,103 @@
-# ⚛️ Atom Control Center
+# 🦞 OpenClaw Control Center
 
-A comprehensive web dashboard for monitoring and managing OpenClaw's system status, active sessions, and scheduled tasks.
+A self-hosted dashboard for monitoring and managing your [OpenClaw](https://github.com/openclaw/openclaw) AI assistant.
 
-## 🚀 Quick Start
+![License](https://img.shields.io/badge/license-MIT-blue)
+
+## Features
+
+- **Dashboard** — Gateway status, uptime, model info at a glance
+- **Sessions** — View active sessions and sub-agents, kill stale ones
+- **Live Logs** — Real-time streaming from PM2 logs via SSE
+- **Cron Jobs** — View, enable/disable, and trigger cron jobs
+- **Actions** — Quick actions (restart gateway, clear cache, run backups)
+- **Projects** — Task board with projects, priorities, and assignees
+
+## Requirements
+
+- [OpenClaw](https://github.com/openclaw/openclaw) installed and running
+- Node.js 18+
+- PM2 (for log streaming)
+
+## Quick Start
 
 ```bash
-# Start the dashboard (if not already running)
-cd /root/.openclaw/workspace/projects/cron-dashboard
+git clone <repo-url> openclaw-panel
+cd openclaw-panel
+npm install
+cp .env.example .env
+# Edit .env with your credentials
+cp config.example.json config.json
+# Edit config.json with your Discord channels, panel name, etc.
 npm start
-
-# Or via PM2 (recommended)
-pm2 start server.js --name cron-dashboard
 ```
 
-**Access the dashboard:** http://localhost:3000
+The panel runs on `http://localhost:3000` by default.
 
-## 📊 Features
-
-### System Status
-Monitor OpenClaw's core metrics at a glance:
-- OpenClaw version
-- Gateway uptime
-- Active session count
-- Current model in use
-
-### Active Sessions Monitor
-View and manage all active sessions:
-- Sub-agents, cron jobs, group chats, and main sessions
-- Real-time status, runtime, and token usage
-- Kill button for sub-agents and cron sessions
-- Color-coded badges by session type
-
-### Scheduled Tasks (Cron)
-Complete cron job management:
-- View all scheduled tasks with next run times
-- Run jobs manually on demand
-- Enable/disable jobs
-- View last run status and duration
-- Collapsible section with "View All" expansion
-- Auto-sorted by next execution time
-
-## 🔧 Management
+### Running with PM2
 
 ```bash
-# View status
-pm2 status cron-dashboard
-
-# Restart after changes
-pm2 restart cron-dashboard
-
-# View logs
-pm2 logs cron-dashboard
-
-# Stop
-pm2 stop cron-dashboard
+pm2 start server.js --name openclaw-panel
+pm2 save
 ```
 
-## 📡 API Endpoints
+### Reverse Proxy (nginx)
 
-### `GET /api/status`
-System-wide status information
-
-### `GET /api/sessions`
-List all active sessions with metadata
-
-### `GET /api/jobs`
-List all cron jobs with schedules
-
-### `POST /api/jobs/:id/run`
-Trigger a cron job manually
-
-### `POST /api/jobs/:id/enable`
-Enable a disabled cron job
-
-### `POST /api/jobs/:id/disable`
-Disable an active cron job
-
-### `POST /api/sessions/:key/kill`
-Terminate a session (sub-agents/cron only)
-
-## 🎨 Design
-
-- Dark theme optimized for terminal aesthetics
-- Mobile-friendly responsive layout
-- Auto-refresh every 30 seconds
-- Real-time visual feedback for all actions
-- Color-coded status indicators
-
-## 📁 Project Structure
-
-```
-cron-dashboard/
-├── server.js              # Express backend with API endpoints
-├── public/
-│   └── index.html        # Frontend dashboard (single page)
-├── package.json          # Dependencies
-└── README.md             # This file
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_buffering off;  # Important for SSE live logs
+}
 ```
 
-## 🛠️ Tech Stack
+## Configuration
 
-- **Backend:** Node.js + Express
-- **Frontend:** Vanilla JavaScript + Tailwind CSS
-- **Process Manager:** PM2
-- **Data Source:** OpenClaw CLI commands
+### Environment Variables (`.env`)
 
-## 📝 See Also
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTH_USER` | `admin` | Login username |
+| `AUTH_PASS` | `changeme` | Login password |
+| `SESSION_SECRET` | random | Express session secret |
+| `PORT` | `3000` | Server port |
+| `PANEL_NAME` | `Control Center` | Name shown in sidebar |
+| `PANEL_ICON` | `atom` | Lucide icon name for sidebar |
 
-- [CONTROL-CENTER-SUMMARY.md](./CONTROL-CENTER-SUMMARY.md) - Detailed build summary and technical implementation
+### Config File (`config.json`)
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `panelName` | string | Dashboard title and sidebar name |
+| `panelIcon` | string | Lucide icon name for sidebar |
+| `discordChannels` | object | Map of Discord channel IDs to display names |
+| `backupCommand` | string | Custom backup shell command |
+| `taskAssignees` | array | Valid assignee names for task board |
+
+**Example `config.json`:**
+
+```json
+{
+  "panelName": "My Control Center",
+  "panelIcon": "terminal",
+  "discordChannels": {
+    "123456789012345678": "#general",
+    "234567890123456789": "#coding"
+  },
+  "backupCommand": "/path/to/backup.sh",
+  "taskAssignees": ["agent", "user", "team"]
+}
+```
+
+## Tech Stack
+
+- **Backend:** Node.js, Express, better-sqlite3
+- **Frontend:** Tailwind CSS (CDN), Lucide Icons, Chart.js
+- **Fonts:** Space Grotesk + JetBrains Mono
+
+## License
+
+MIT

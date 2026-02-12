@@ -1,0 +1,9 @@
+{
+  "panelName": "Control Center",
+  "panelIcon": "atom",
+  "discordChannels": {
+    "CHANNEL_ID_HERE": "#channel-name"
+  },
+  "backupCommand": null,
+  "taskAssignees": ["agent", "user"]
+}

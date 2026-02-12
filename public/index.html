@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Atom Control Center</title>
+  <script>window.PANEL_NAME = "{{PANEL_NAME}}";</script>
+  <title>{{PANEL_NAME}}</title>
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -35,10 +36,10 @@
     <!-- Logo & Gateway Status -->
     <div class="p-5 border-b border-slate-700">
       <div class="flex items-center gap-3 mb-4">
-        <i data-lucide="atom" class="w-8 h-8 text-cyan-400"></i>
+        <i data-lucide="{{PANEL_ICON}}" class="w-8 h-8 text-cyan-400"></i>
         <div>
-          <h1 class="text-xl font-bold text-white">Atom</h1>
-          <p class="text-xs text-slate-400">Control Center</p>
+          <h1 class="text-xl font-bold text-white">{{PANEL_NAME}}</h1>
+          <p class="text-xs text-slate-400">OpenClaw Panel</p>
         </div>
       </div>
       
@@ -313,7 +314,7 @@
           <div class="card">
             <div class="text-4xl mb-4"><i data-lucide="archive" class="w-10 h-10 text-slate-400"></i></div>
             <h3 class="text-xl font-semibold mb-2">Run Backup</h3>
-            <p class="text-slate-400 text-sm mb-4">Backup workspace to Atombox (Dropbox).</p>
+            <p class="text-slate-400 text-sm mb-4">Execute configured backup command.</p>
             <button onclick="window.actions.runBackup()" class="btn-secondary w-full">Run</button>
           </div>
         </div>

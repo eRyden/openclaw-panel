@@ -1,1 +1,13 @@
+node_modules/
+.env
+config.json
 .worktrees/
+*.log
+
+# Personal documentation files
+REBUILD-SPEC.md
+REBUILD-COMPLETE.md
+IMPLEMENTATION-SUMMARY.md
+CONTROL-CENTER-SUMMARY.md
+TASKS_BOARD_COMPLETE.md
+reference/
