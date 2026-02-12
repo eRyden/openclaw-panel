@@ -88,7 +88,7 @@ function runOpenClaw(cmd) {
 
 // Simple cache for slow commands
 const cache = { data: {}, ts: {} };
-const CACHE_TTL = 10000; // 10 seconds
+const CACHE_TTL = 120000; // 2 minutes
 
 function getCached(key) {
   if (cache.data[key] && Date.now() - cache.ts[key] < CACHE_TTL) {
@@ -1436,6 +1436,60 @@ app.post('/api/pm2/:name/stop', requireAuth, async (req, res) => {
   }
 });
 
+// Background cache warmer — fetches slow CLI data so users get instant responses
+async function warmCache() {
+  try {
+    const [versionResult, gatewayStatus, cronStatus] = await Promise.all([
+      new Promise((resolve, reject) => {
+        exec('openclaw --version', { timeout: 15000 }, (error, stdout) => {
+          if (error) reject(error); else resolve(stdout.trim());
+        });
+      }),
+      runOpenClaw('gateway status --json'),
+      runOpenClaw('cron status --json')
+    ]);
+
+    let uptime = 'Unknown';
+    if (gatewayStatus.service?.runtime?.pid) {
+      const pid = gatewayStatus.service.runtime.pid;
+      try {
+        const psResult = await new Promise((resolve, reject) => {
+          exec(`ps -p ${pid} -o etimes=`, (error, stdout) => {
+            if (error) reject(error); else resolve(parseInt(stdout.trim()));
+          });
+        });
+        const s = psResult;
+        const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+        uptime = d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+      } catch { uptime = 'Active'; }
+    }
+
+    setCache('status', {
+      version: versionResult,
+      uptime,
+      sessionCount: cronStatus.jobs || 0,
+      model: 'Opus 4.6',
+      gatewayStatus: gatewayStatus.service?.runtime?.status || 'unknown'
+    });
+
+    // Warm sessions cache
+    const sessionData = await runOpenClaw('sessions list --json');
+    setCache('sessions', { sessions: (sessionData.sessions || []) });
+
+    // Warm jobs cache
+    const cronJobsData = await runOpenClaw('cron list --json');
+    setCache('jobs', cronJobsData);
+
+    console.log('Cache warmed successfully');
+  } catch (err) {
+    console.error('Cache warm failed:', err.message);
+  }
+}
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🦞 Atom Control Center running at http://localhost:${PORT}`);
+  // Warm cache on startup
+  warmCache();
+  // Re-warm every 2 minutes
+  setInterval(warmCache, 120000);
 });
