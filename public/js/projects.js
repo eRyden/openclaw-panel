@@ -682,7 +682,7 @@ window.projects = {
     }
   },
 
-  async createProject(data) {
+  async createProject(data, { skipDashboardReload } = {}) {
     try {
       const res = await fetch('/api/hive/projects', {
         method: 'POST',
@@ -697,7 +697,7 @@ window.projects = {
       }
       this.showToast('Project created', 'success');
       await this.fetchProjects();
-      this.loadHiveDashboard();
+      if (!skipDashboardReload) this.loadHiveDashboard();
       return created;
     } catch (err) {
       console.error('Failed to create project:', err);
@@ -844,7 +844,8 @@ window.createProject = async () => {
     description: document.getElementById('hive-project-description')?.value,
     repo_path: document.getElementById('hive-project-repo')?.value
   };
-  const created = await window.projects.createProject(data);
+  const taskModalOpen = !!document.getElementById('hive-task-modal');
+  const created = await window.projects.createProject(data, { skipDashboardReload: taskModalOpen });
   if (!created) return;
 
   const projectModal = document.getElementById('hive-project-modal');
