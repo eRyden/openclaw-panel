@@ -122,6 +122,13 @@ window.projects = {
 
     const stageTasks = this.getStageTasks();
     const archived = this.hiveData?.archived || [];
+    const allTasks = Object.values(stageTasks).flat();
+    const taskMap = {};
+    allTasks.forEach(task => {
+      if (task && task.id !== undefined && task.id !== null) {
+        taskMap[task.id] = task;
+      }
+    });
 
     kanban.innerHTML = `
       <div class="grid grid-cols-6 gap-3" style="min-width: 900px;">
@@ -135,7 +142,7 @@ window.projects = {
                 <span class=\"text-xs font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300\">${count}</span>
               </div>
               <div class=\"flex-1 overflow-y-auto pr-1\" style=\"max-height: 520px;\">
-                ${tasks.length ? tasks.map(task => this.renderTaskCard(task)).join('') : '<div class="text-slate-600 text-xs text-center py-6">No tasks</div>'}
+                ${tasks.length ? tasks.map(task => this.renderTaskCard(task, { taskMap })).join('') : '<div class="text-slate-600 text-xs text-center py-6">No tasks</div>'}
               </div>
             </div>
           `;
@@ -216,13 +223,16 @@ window.projects = {
     return stages;
   },
 
-  renderTaskCard(task) {
+  renderTaskCard(task, { taskMap } = {}) {
     const title = task.title || 'Untitled Task';
     const projectName = task.project_name || task.project?.name || task.project || 'Unknown Project';
     const priority = (task.priority || 'normal').toLowerCase();
     const status = (task.status || '').toLowerCase();
     const stage = (task.stage || '').toLowerCase();
     const time = this.timeAgo(task.updated_at || task.created_at || task.started_at || task.completed_at);
+    const isSubtask = !!task.parent_id;
+    const parentTitle = isSubtask && taskMap ? taskMap[task.parent_id]?.title : null;
+    const displayProjectName = isSubtask ? (parentTitle || projectName) : projectName;
 
     const priorityColors = {
       low: 'text-slate-400',
@@ -234,8 +244,8 @@ window.projects = {
     const statusIndicator = this.renderStatusIndicator(task);
     const greenlightButton = stage === 'plan'
       ? (task.greenlit
-        ? `<button onclick="greenlightTask(${task.id})" class="text-xs px-2 py-1 rounded-md bg-emerald-600/30 text-emerald-300 border border-emerald-500/50 hover:bg-emerald-600/40">✓ Greenlit</button>`
-        : `<button onclick="greenlightTask(${task.id})" class="text-xs px-2 py-1 rounded-md bg-amber-600/20 text-amber-300 border border-amber-500/40 hover:bg-amber-600/40">Greenlight</button>`)
+        ? `<button onclick="event.stopPropagation(); greenlightTask(${task.id})" class="text-xs px-2 py-1 rounded-md bg-emerald-600/30 text-emerald-300 border border-emerald-500/50 hover:bg-emerald-600/40">✓ Greenlit</button>`
+        : `<button onclick="event.stopPropagation(); greenlightTask(${task.id})" class="text-xs px-2 py-1 rounded-md bg-amber-600/20 text-amber-300 border border-amber-500/40 hover:bg-amber-600/40">Greenlight</button>`)
       : '';
 
     const subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
@@ -246,7 +256,7 @@ window.projects = {
     const showSubtasks = subtaskCount > 0;
 
     const parentName = task.parent_title || task.parent_task_title || task.parent?.title || task.parent_task?.title;
-    const parentTag = parentName ? `<span class="text-xs text-slate-500">↳ ${parentName}</span>` : '';
+    const parentTag = !isSubtask && parentName ? `<span class="text-xs text-slate-500">↳ ${parentName}</span>` : '';
 
     const doneButtons = stage === 'done' ? `
       <div class="flex gap-2 mt-2 pt-2 border-t border-slate-700">
@@ -255,13 +265,17 @@ window.projects = {
       </div>
     ` : '';
 
+    const titlePrefix = isSubtask ? '↳ ' : '';
+    const cardBorder = isSubtask ? 'border-blue-500/30' : 'border-slate-700';
+    const titleSize = isSubtask ? 'text-xs' : 'text-sm';
+
     return `
-      <div class="bg-slate-800 border border-slate-700 rounded-lg p-3 mb-2 cursor-pointer hover:border-slate-500 transition" onclick="showTaskDetail(${task.id})">
+      <div class="bg-slate-800 border ${cardBorder} rounded-lg p-3 mb-2 cursor-pointer hover:border-slate-500 transition" onclick="showTaskDetail(${task.id})">
         <div class="flex items-start justify-between mb-1 gap-2">
-          <span class="text-white text-sm font-medium leading-tight">${title}</span>
+          <span class="text-white ${titleSize} font-medium leading-tight">${titlePrefix}${title}</span>
           <span class="text-xs ${priorityColors[priority] || 'text-blue-400'}">●</span>
         </div>
-        <div class="text-slate-500 text-xs">${projectName}</div>
+        <div class="text-slate-500 text-xs">${displayProjectName}</div>
         ${parentTag}
         ${showSubtasks ? `
           <div class="w-full h-1.5 bg-slate-700 rounded-full mt-2">
@@ -388,30 +402,39 @@ window.projects = {
       failed: 'bg-red-600/20 text-red-300 border-red-500/40',
       plan: 'bg-slate-800 text-slate-300 border-slate-700'
     };
-    const subtasksSection = subtasks.length ? `
-      <div class="mb-6">
-        <h4 class="text-sm font-semibold text-slate-200 mb-2">Subtasks</h4>
-        <div class="flex flex-col gap-2">
-          ${subtasks.map(subtask => {
-            const rawStatus = (subtask.status || '').toLowerCase();
-            const rawStage = (subtask.stage || '').toLowerCase();
-            const normalized = ['done', 'running', 'failed'].includes(rawStatus)
-              ? rawStatus
-              : (rawStage === 'done' ? 'done' : rawStage === 'running' ? 'running' : rawStage === 'failed' ? 'failed' : 'plan');
-            const statusLabel = normalized.charAt(0).toUpperCase() + normalized.slice(1);
-            const stageLabel = (subtask.stage || 'plan').toString();
-            const statusClass = subtaskStatusStyles[normalized] || subtaskStatusStyles.plan;
-            return `
-              <div class="flex items-center justify-between gap-2 bg-slate-950/40 border border-slate-800 rounded-lg px-3 py-2 text-xs">
-                <span class="text-slate-200">${subtask.title || 'Untitled'}</span>
-                <div class="flex items-center gap-2">
-                  <span class="px-2 py-0.5 rounded-full border ${statusClass}">${statusLabel}</span>
-                  <span class="px-2 py-0.5 rounded-full border bg-slate-800 text-slate-300 border-slate-700">${stageLabel}</span>
-                </div>
+    const subtaskStageStyles = {
+      plan: 'bg-slate-800 text-slate-300 border-slate-700',
+      implement: 'bg-blue-900/30 text-blue-200 border-blue-700/50',
+      verify: 'bg-amber-900/20 text-amber-200 border-amber-700/40',
+      test: 'bg-purple-900/20 text-purple-200 border-purple-700/40',
+      deploy: 'bg-cyan-900/20 text-cyan-200 border-cyan-700/40',
+      done: 'bg-emerald-900/20 text-emerald-200 border-emerald-700/40'
+    };
+    const hasSubtasks = subtasks.length > 0;
+    const completedSubtasks = subtasks.filter(subtask => ['done', 'completed', 'complete'].includes((subtask.status || subtask.stage || '').toLowerCase())).length;
+    const progressPercent = hasSubtasks ? Math.min(100, Math.round((completedSubtasks / subtasks.length) * 100)) : 0;
+    const subtasksSection = hasSubtasks ? `
+      <div class="flex flex-col gap-2">
+        ${subtasks.map(subtask => {
+          const rawStatus = (subtask.status || '').toLowerCase();
+          const rawStage = (subtask.stage || '').toLowerCase();
+          const normalized = ['done', 'running', 'failed'].includes(rawStatus)
+            ? rawStatus
+            : (rawStage === 'done' ? 'done' : rawStage === 'running' ? 'running' : rawStage === 'failed' ? 'failed' : 'plan');
+          const statusLabel = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+          const stageLabel = (subtask.stage || 'plan').toString();
+          const statusClass = subtaskStatusStyles[normalized] || subtaskStatusStyles.plan;
+          const stageClass = subtaskStageStyles[rawStage] || subtaskStageStyles.plan;
+          return `
+            <div class="flex items-center justify-between gap-2 bg-slate-950/40 border border-slate-800 rounded-lg px-3 py-2 text-xs">
+              <span class="text-slate-200">${subtask.title || 'Untitled'}</span>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded-full border ${statusClass}">${statusLabel}</span>
+                <span class="px-2 py-0.5 rounded-full border ${stageClass}">${stageLabel}</span>
               </div>
-            `;
-          }).join('')}
-        </div>
+            </div>
+          `;
+        }).join('')}
       </div>
     ` : '';
 
@@ -443,17 +466,30 @@ window.projects = {
           </div>
         ` : ''}
 
-        ${subtasksSection}
+        ${hasSubtasks ? `
+          <div class="mb-6">
+            <h4 class="text-sm font-semibold text-slate-200 mb-2">Subtask Progress</h4>
+            <div class="w-full h-2 bg-slate-800 rounded-full">
+              <div class="h-2 bg-blue-500 rounded-full" style="width: ${progressPercent}%"></div>
+            </div>
+            <div class="text-xs text-slate-400 mt-2">${completedSubtasks}/${subtasks.length} subtasks complete</div>
+            <div class="mt-3">
+              ${subtasksSection}
+            </div>
+          </div>
+        ` : subtasksSection}
 
-        <div class="mb-6">
-          <h4 class="text-sm font-semibold text-slate-200 mb-3">Pipeline Timeline</h4>
-          ${this.renderTimeline(task)}
-        </div>
+        ${hasSubtasks ? '' : `
+          <div class="mb-6">
+            <h4 class="text-sm font-semibold text-slate-200 mb-3">Pipeline Timeline</h4>
+            ${this.renderTimeline(task)}
+          </div>
 
-        <div class="mb-6">
-          <h4 class="text-sm font-semibold text-slate-200 mb-3">Step Logs</h4>
-          ${this.renderStepLogs(task)}
-        </div>
+          <div class="mb-6">
+            <h4 class="text-sm font-semibold text-slate-200 mb-3">Step Logs</h4>
+            ${this.renderStepLogs(task)}
+          </div>
+        `}
 
         <div class="flex flex-wrap gap-2">
           ${task.stage === 'plan' && !task.greenlit ? `<button onclick="greenlightTask(${task.id})" class="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium">Green-light</button>` : ''}

@@ -928,7 +928,7 @@ app.post('/api/hive/tasks', requireAuth, (req, res) => {
     // Notify Atom about new task for brainstorming
     if (!parent_id) {
       const projectName = hiveDb.prepare('SELECT name FROM projects WHERE id = ?').get(project_id)?.name || 'Unknown';
-      notifyAtom(`[Hive] 🐝 New task created in ${projectName}: "${title}" (ID: ${task.id}). Ready to brainstorm specs when Erik is.`);
+      notifyAtom(`[Hive] 🐝 New task created in ${projectName}: "${title}" (ID: ${task.id})\n\nSpec:\n${spec || 'No spec provided'}\n\nAtom: Read the spec above and post a brainstorm to #coding with your understanding + proposed subtasks.`);
     }
     
     res.json({ task });
