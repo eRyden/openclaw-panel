@@ -988,8 +988,14 @@ app.post('/api/hive/tasks/:id/greenlight', requireAuth, async (req, res) => {
     let nextStage = task.stage;
     let startedAt = task.started_at;
 
+    const subtasks = hiveDb.prepare('SELECT * FROM tasks WHERE parent_id = ?').all(task.id);
+    const hasSubtasks = subtasks.length > 0;
+
     if (newGreenlit) {
-      if (task.auto_run) {
+      if (hasSubtasks) {
+        nextStatus = 'plan';
+        nextStage = 'plan';
+      } else if (task.auto_run) {
         nextStatus = 'running';
         nextStage = 'implement';
         if (!startedAt) startedAt = new Date().toISOString();
@@ -1010,7 +1016,17 @@ app.post('/api/hive/tasks/:id/greenlight', requireAuth, async (req, res) => {
       WHERE id = ?
     `).run(newGreenlit, nextStatus, nextStage, startedAt, task.id);
 
-    if (newGreenlit && task.auto_run) {
+    if (newGreenlit && hasSubtasks) {
+      const markGreenlit = hiveDb.prepare(`
+        UPDATE tasks
+        SET greenlit = 1,
+            updated_at = datetime('now')
+        WHERE id = ?
+      `);
+      subtasks.forEach(subtask => {
+        markGreenlit.run(subtask.id);
+      });
+    } else if (newGreenlit && task.auto_run) {
       await startPipelineStep(task.id, 'implement');
     }
 
@@ -1107,10 +1123,12 @@ app.post('/api/hive/tasks/:id/feedback', requireAuth, (req, res) => {
         VALUES (?, ?, ?, 'plan', 'plan', ?, NULL, ?)
       `);
 
+      const combinedSpec = `## Original Task\n${task.title || ''}\n\n### Original Spec\n${task.spec || ''}\n\n## Feedback\n${feedback_text}`;
+
       const result = insert.run(
         task.project_id,
         `${task.title} (feedback)`,
-        feedback_text,
+        combinedSpec,
         task.id,
         feedback_text
       );
@@ -1174,6 +1192,30 @@ app.post('/api/hive/pipeline/:taskId/advance', requireAuth, async (req, res) => 
             updated_at = datetime('now')
         WHERE id = ?
       `).run(task.id);
+
+      if (task.parent_id) {
+        const counts = hiveDb.prepare(`
+          SELECT COUNT(*) as total,
+                 SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done
+          FROM tasks
+          WHERE parent_id = ?
+        `).get(task.parent_id);
+
+        if (counts && counts.total > 0 && counts.total === counts.done) {
+          hiveDb.prepare(`
+            UPDATE tasks
+            SET status = 'done',
+                stage = 'done',
+                completed_at = datetime('now'),
+                updated_at = datetime('now')
+            WHERE id = ?
+          `).run(task.parent_id);
+
+          const parentTask = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(task.parent_id);
+          const parentTitle = parentTask?.title || 'Unknown';
+          notifyAtom(`[Hive] ✅ All subtasks complete for parent task: "${parentTitle}" (ID: ${task.parent_id}). Moved to Done.`);
+        }
+      }
 
       const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
       return res.json({ task: updated, done: true });

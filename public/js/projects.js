@@ -196,6 +196,18 @@ window.projects = {
       });
     }
 
+    const allTasks = Object.values(stages).flat();
+    const parentIdSet = new Set(allTasks.map(task => task.parent_id).filter(Boolean));
+
+    Object.keys(stages).forEach(key => {
+      stages[key] = stages[key].filter(task => {
+        if (task.parent_id) return false;
+        const isParent = parentIdSet.has(task.id);
+        if (isParent && !['plan', 'done'].includes(key)) return false;
+        return true;
+      });
+    });
+
     return stages;
   },
 
