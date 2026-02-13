@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   stage TEXT DEFAULT 'plan',
   priority TEXT DEFAULT 'normal',
   greenlit INTEGER DEFAULT 0,
-  auto_run INTEGER DEFAULT 1,
+  auto_run INTEGER DEFAULT 0,
   retry_count INTEGER DEFAULT 0,
   max_retries INTEGER DEFAULT 2,
   created_at TEXT DEFAULT (datetime('now')),

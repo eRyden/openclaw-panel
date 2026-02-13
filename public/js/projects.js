@@ -83,16 +83,23 @@ window.projects = {
     const derived = projects.length ? projects : this.deriveProjectsFromTasks();
     this.projectCache = derived;
 
+    // Sort: General first, then alphabetical
+    const general = derived.filter(p => p.name === 'General');
+    const others = derived.filter(p => p.name !== 'General').sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const sorted = [...general, ...others];
+
     const buttons = [
       `<button class="px-3 py-1.5 rounded-full text-sm font-medium ${this.selectedProject === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}" onclick="filterHiveProject('all')">All</button>`
     ];
 
-    derived.forEach(project => {
+    sorted.forEach(project => {
       const id = project.id ?? project.project_id ?? project.name;
       const name = project.name || project.title || 'Unnamed';
       const active = this.selectedProject === String(id);
+      const isDeletable = name !== 'General';
+      const deleteBtn = isDeletable ? `<span class="ml-1 text-slate-500 hover:text-red-400 transition cursor-pointer" onclick="event.stopPropagation(); deleteProject(${project.id})">✕</span>` : '';
       buttons.push(`
-        <button class="px-3 py-1.5 rounded-full text-sm font-medium ${active ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}" onclick="filterHiveProject('${id}')">${name}</button>
+        <button class="group px-3 py-1.5 rounded-full text-sm font-medium inline-flex items-center ${active ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}" onclick="filterHiveProject('${id}')">${name}${deleteBtn}</button>
       `);
     });
 
@@ -109,7 +116,7 @@ window.projects = {
       { key: 'verify', label: 'Verify', color: 'text-amber-200', accent: 'bg-amber-900/20 border-amber-700/40' },
       { key: 'test', label: 'Test', color: 'text-purple-200', accent: 'bg-purple-900/20 border-purple-700/40' },
       { key: 'deploy', label: 'Deploy', color: 'text-cyan-200', accent: 'bg-cyan-900/20 border-cyan-700/40' },
-      { key: 'done', label: 'Done', color: 'text-green-200', accent: 'bg-green-900/20 border-green-700/40' }
+      { key: 'done', label: 'Done', color: 'text-emerald-200', accent: 'bg-emerald-900/20 border-emerald-700/40' }
     ];
 
     const stageTasks = this.getStageTasks();
@@ -118,7 +125,7 @@ window.projects = {
       const tasks = stageTasks[stage.key] || [];
       const count = tasks.length;
       return `
-        <div class="bg-slate-900/40 border border-slate-800 rounded-xl p-3 flex flex-col min-h-[520px]">
+        <div class="bg-slate-900/60 border border-slate-600 rounded-xl p-3 flex flex-col min-h-[520px]">
           <div class="flex items-center justify-between mb-3 px-2 py-2 rounded-lg border ${stage.accent}">
             <span class="text-sm font-semibold ${stage.color}">${stage.label}</span>
             <span class="text-xs font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">${count}</span>
@@ -187,8 +194,10 @@ window.projects = {
     };
 
     const statusIndicator = this.renderStatusIndicator(task);
-    const greenlightButton = stage === 'plan' && !task.greenlit
-      ? `<button onclick="greenlightTask(${task.id})" class="text-xs px-2 py-1 rounded-md bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-600/40">Greenlight</button>`
+    const greenlightButton = stage === 'plan'
+      ? (task.greenlit
+        ? `<button onclick="greenlightTask(${task.id})" class="text-xs px-2 py-1 rounded-md bg-emerald-600/30 text-emerald-300 border border-emerald-500/50 hover:bg-emerald-600/40">✓ Greenlit</button>`
+        : `<button onclick="greenlightTask(${task.id})" class="text-xs px-2 py-1 rounded-md bg-amber-600/20 text-amber-300 border border-amber-500/40 hover:bg-amber-600/40">Greenlight</button>`)
       : '';
 
     return `
@@ -239,9 +248,12 @@ window.projects = {
 
   timeAgo(dateStr) {
     if (!dateStr) return '—';
-    const date = new Date(dateStr);
+    // SQLite datetimes are UTC but lack 'Z' suffix
+    const normalized = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
+    const date = new Date(normalized);
     if (Number.isNaN(date.getTime())) return '—';
     const diff = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (diff < 0) return 'just now';
     if (diff < 60) return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -311,7 +323,8 @@ window.projects = {
         </div>
 
         <div class="flex flex-wrap gap-2">
-          ${task.stage === 'plan' ? `<button onclick="greenlightTask(${task.id})" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium">Green-light</button>` : ''}
+          ${task.stage === 'plan' && !task.greenlit ? `<button onclick="greenlightTask(${task.id})" class="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium">Green-light</button>` : ''}
+          ${task.stage === 'plan' && task.greenlit ? `<span class="px-3 py-2 bg-emerald-600/30 text-emerald-300 rounded-lg text-xs font-medium">✓ Greenlit</span>` : ''}
           ${status === 'running' ? `<button onclick="pauseTask(${task.id})" class="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium">Pause</button>` : ''}
           ${status === 'failed' ? `<button onclick="retryTask(${task.id})" class="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium">Retry</button>` : ''}
           <button onclick="showEditTaskModal(${task.id})" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-xs font-medium">Edit</button>
@@ -414,7 +427,12 @@ window.projects = {
         </div>
         <div class="space-y-4">
           <div>
-            <label class="block text-sm text-slate-300 mb-1">Project</label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-sm text-slate-300">Project</label>
+              <button onclick="showNewProjectModal()" class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                <i data-lucide="plus" class="w-3 h-3"></i> Add Project
+              </button>
+            </div>
             <select id="hive-task-project" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-200">
               ${projects.map(project => `<option value="${project.id}">${project.name}</option>`).join('')}
             </select>
@@ -486,7 +504,7 @@ window.projects = {
     try {
       const res = await fetch('/api/hive/projects');
       const data = await res.json();
-      this.projectCache = data || [];
+      this.projectCache = data.projects || data || [];
       return this.projectCache;
     } catch (err) {
       console.error('Failed to load projects:', err);
@@ -651,6 +669,18 @@ window.updateTask = (taskId) => {
   closeHiveModal();
 };
 window.deleteTask = (taskId) => window.projects.deleteTask(taskId);
+window.deleteProject = async (projectId) => {
+  if (!confirm('Delete this project? Tasks under it must be removed first.')) return;
+  try {
+    const res = await fetch(`/api/hive/projects/${projectId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.error) { window.projects.showToast(data.error, 'error'); return; }
+    window.projects.showToast('Project deleted', 'warning');
+    window.projects.loadHiveDashboard();
+  } catch (err) {
+    window.projects.showToast('Failed to delete project', 'error');
+  }
+};
 window.closeHivePanel = () => window.projects.closePanel();
 window.closeHiveModal = () => {
   const modal = document.getElementById('hive-task-modal') || document.getElementById('hive-project-modal');

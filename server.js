@@ -970,8 +970,6 @@ app.post('/api/hive/tasks/:id/greenlight', requireAuth, async (req, res) => {
   }
 });
 
-});
-
 app.post('/api/hive/tasks/:id/pause', requireAuth, (req, res) => {
   try {
     const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
