@@ -41,6 +41,7 @@ app.use(session({
 
 // Static assets (unprotected - for login page styling)
 app.use('/assets', express.static(path.join(__dirname, 'public/assets')));
+app.use('/atom-logo.png', express.static(path.join(__dirname, 'public/atom-logo.png')));
 
 // Login page
 const loginHtml = fs.readFileSync(path.join(__dirname, 'public', 'login.html'), 'utf8');
