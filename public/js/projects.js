@@ -201,8 +201,11 @@ window.projects = {
 
     Object.keys(stages).forEach(key => {
       stages[key] = stages[key].filter(task => {
-        if (task.parent_id) return false;
+        const isSubtask = !!task.parent_id;
         const isParent = parentIdSet.has(task.id);
+        // Subtasks: only show in middle columns (implement/verify/test/deploy), never plan/done
+        if (isSubtask && ['plan', 'done'].includes(key)) return false;
+        // Parents: only show in plan/done, never middle columns
         if (isParent && !['plan', 'done'].includes(key)) return false;
         return true;
       });
