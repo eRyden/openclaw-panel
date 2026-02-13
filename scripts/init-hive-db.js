@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   auto_run INTEGER DEFAULT 0,
   retry_count INTEGER DEFAULT 0,
   max_retries INTEGER DEFAULT 2,
+  parent_id INTEGER REFERENCES tasks(id),
+  linked_from_id INTEGER REFERENCES tasks(id),
+  feedback_text TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),
   started_at TEXT,
@@ -61,5 +64,21 @@ CREATE TABLE IF NOT EXISTS step_logs (
   message TEXT NOT NULL
 );
 `);
+
+const alterStatements = [
+  "ALTER TABLE tasks ADD COLUMN parent_id INTEGER REFERENCES tasks(id)",
+  "ALTER TABLE tasks ADD COLUMN linked_from_id INTEGER REFERENCES tasks(id)",
+  "ALTER TABLE tasks ADD COLUMN feedback_text TEXT"
+];
+
+alterStatements.forEach(statement => {
+  try {
+    db.exec(statement);
+  } catch (err) {
+    if (!String(err.message).includes('duplicate column')) {
+      console.warn(`Hive DB migration warning: ${err.message}`);
+    }
+  }
+});
 
 console.log(`Hive database initialized at ${dbPath}`);

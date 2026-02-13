@@ -839,6 +839,14 @@ app.get('/api/hive/tasks', requireAuth, (req, res) => {
       filters.push('stage = ?');
       params.push(req.query.stage);
     }
+    if (req.query.parent_id !== undefined) {
+      if (req.query.parent_id === 'null') {
+        filters.push('parent_id IS NULL');
+      } else {
+        filters.push('parent_id = ?');
+        params.push(req.query.parent_id);
+      }
+    }
 
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const tasks = hiveDb.prepare(`SELECT * FROM tasks ${where} ORDER BY created_at DESC`).all(...params);
@@ -861,7 +869,10 @@ app.get('/api/hive/tasks/:id', requireAuth, (req, res) => {
       stepLogs = hiveDb.prepare(`SELECT * FROM step_logs WHERE run_id IN (${placeholders}) ORDER BY id ASC`).all(...runIds);
     }
 
-    res.json({ task, pipeline_runs: runs, step_logs: stepLogs });
+    const subtasks = hiveDb.prepare('SELECT * FROM tasks WHERE parent_id = ? ORDER BY created_at ASC').all(req.params.id);
+    const feedbackTasks = hiveDb.prepare('SELECT * FROM tasks WHERE linked_from_id = ? ORDER BY created_at ASC').all(req.params.id);
+
+    res.json({ ...task, subtasks, feedback_tasks: feedbackTasks, pipeline_runs: runs, step_logs: stepLogs });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -869,16 +880,23 @@ app.get('/api/hive/tasks/:id', requireAuth, (req, res) => {
 
 app.post('/api/hive/tasks', requireAuth, (req, res) => {
   try {
-    const { project_id, title, spec, priority } = req.body || {};
+    const { project_id, title, spec, priority, parent_id, linked_from_id } = req.body || {};
     if (!project_id || !title) {
       return res.status(400).json({ error: 'project_id and title are required' });
     }
 
     const stmt = hiveDb.prepare(`
-      INSERT INTO tasks (project_id, title, spec, priority)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO tasks (project_id, title, spec, priority, parent_id, linked_from_id)
+      VALUES (?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(project_id, title, spec || null, priority || 'normal');
+    const result = stmt.run(
+      project_id,
+      title,
+      spec || null,
+      priority || 'normal',
+      parent_id || null,
+      linked_from_id || null
+    );
     const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
     res.json({ task });
   } catch (err) {
@@ -988,6 +1006,30 @@ app.post('/api/hive/tasks/:id/pause', requireAuth, (req, res) => {
   }
 });
 
+app.post('/api/hive/tasks/:id/archive', requireAuth, (req, res) => {
+  try {
+    const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    if (!task) return res.status(404).json({ error: 'task not found' });
+
+    hiveDb.prepare(`
+      UPDATE tasks
+      SET status = 'archived', updated_at = datetime('now')
+      WHERE id = ?
+    `).run(req.params.id);
+
+    hiveDb.prepare(`
+      UPDATE tasks
+      SET status = 'archived', updated_at = datetime('now')
+      WHERE parent_id = ?
+    `).run(req.params.id);
+
+    const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    res.json({ task: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/hive/tasks/:id/retry', requireAuth, (req, res) => {
   try {
     const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
@@ -1004,6 +1046,54 @@ app.post('/api/hive/tasks/:id/retry', requireAuth, (req, res) => {
 
     const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
     res.json({ task: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/hive/tasks/:id/feedback', requireAuth, (req, res) => {
+  try {
+    const { feedback_text } = req.body || {};
+    if (!feedback_text) return res.status(400).json({ error: 'feedback_text is required' });
+
+    const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    if (!task) return res.status(404).json({ error: 'task not found' });
+
+    const createFeedback = hiveDb.transaction(() => {
+      const insert = hiveDb.prepare(`
+        INSERT INTO tasks (
+          project_id,
+          title,
+          spec,
+          status,
+          stage,
+          linked_from_id,
+          parent_id,
+          feedback_text
+        )
+        VALUES (?, ?, ?, 'plan', 'plan', ?, NULL, ?)
+      `);
+
+      const result = insert.run(
+        task.project_id,
+        `${task.title} (feedback)`,
+        feedback_text,
+        task.id,
+        feedback_text
+      );
+
+      hiveDb.prepare(`
+        UPDATE tasks
+        SET status = 'archived', updated_at = datetime('now')
+        WHERE id = ?
+      `).run(task.id);
+
+      return result.lastInsertRowid;
+    });
+
+    const newTaskId = createFeedback();
+    const newTask = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(newTaskId);
+    res.json({ task: newTask });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1146,8 +1236,46 @@ app.get('/api/hive/dashboard', requireAuth, (req, res) => {
       LEFT JOIN pipeline_runs pr ON pr.id = (
         SELECT id FROM pipeline_runs WHERE task_id = t.id ORDER BY id DESC LIMIT 1
       )
+      WHERE t.status IS NULL OR t.status != 'archived'
       ORDER BY t.created_at DESC
     `).all();
+
+    const archivedRows = hiveDb.prepare(`
+      SELECT
+        t.id,
+        t.title,
+        t.project_id,
+        p.name AS project_name,
+        t.status,
+        t.stage,
+        t.priority,
+        t.greenlit,
+        t.created_at,
+        t.started_at,
+        t.completed_at,
+        pr.id AS run_id,
+        pr.stage AS run_stage,
+        pr.status AS run_status,
+        pr.started_at AS run_started_at,
+        pr.completed_at AS run_completed_at,
+        pr.duration_ms AS run_duration_ms,
+        pr.error AS run_error,
+        pr.output AS run_output
+      FROM tasks t
+      JOIN projects p ON p.id = t.project_id
+      LEFT JOIN pipeline_runs pr ON pr.id = (
+        SELECT id FROM pipeline_runs WHERE task_id = t.id ORDER BY id DESC LIMIT 1
+      )
+      WHERE t.status = 'archived'
+      ORDER BY t.created_at DESC
+      LIMIT 50
+    `).all();
+
+    const archivedCount = hiveDb.prepare(`
+      SELECT COUNT(1) AS count
+      FROM tasks
+      WHERE status = 'archived'
+    `).get();
 
     const stages = {
       plan: [],
@@ -1158,7 +1286,7 @@ app.get('/api/hive/dashboard', requireAuth, (req, res) => {
       done: []
     };
 
-    tasks.forEach(task => {
+    const formatTaskRow = (task) => {
       const latestRun = task.run_id ? {
         id: task.run_id,
         stage: task.run_stage,
@@ -1170,7 +1298,7 @@ app.get('/api/hive/dashboard', requireAuth, (req, res) => {
         output: task.run_output
       } : null;
 
-      const formatted = {
+      return {
         id: task.id,
         title: task.title,
         project_id: task.project_id,
@@ -1184,14 +1312,18 @@ app.get('/api/hive/dashboard', requireAuth, (req, res) => {
         completed_at: task.completed_at,
         latest_run: latestRun
       };
+    };
 
+    tasks.forEach(task => {
+      const formatted = formatTaskRow(task);
       if (!stages[task.stage]) stages[task.stage] = [];
       stages[task.stage].push(formatted);
     });
 
+    const archived = archivedRows.map(formatTaskRow);
     const counts = Object.fromEntries(Object.keys(stages).map(stage => [stage, stages[stage].length]));
 
-    res.json({ stages, counts, projects });
+    res.json({ stages, counts, projects, archived, archivedCount: archivedCount.count });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
