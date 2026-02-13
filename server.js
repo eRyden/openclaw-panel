@@ -1404,6 +1404,8 @@ app.get('/api/hive/dashboard', requireAuth, (req, res) => {
         stage: task.stage,
         priority: task.priority,
         greenlit: task.greenlit,
+        parent_id: task.parent_id || null,
+        linked_from_id: task.linked_from_id || null,
         created_at: task.created_at,
         started_at: task.started_at,
         completed_at: task.completed_at,
