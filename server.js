@@ -937,37 +937,33 @@ app.post('/api/hive/tasks', requireAuth, (req, res) => {
       const projectName = hiveDb.prepare('SELECT name FROM projects WHERE id = ?').get(project_id)?.name || 'Unknown';
       notifyAtom(`[Hive] 🐝 New task created in ${projectName}: "${title}" (ID: ${task.id}). Starting brainstorm...`);
       
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+      const promptFile = path.join(os.tmpdir(), `hive-brainstorm-${task.id}.txt`);
       const brainstormPrompt = `You are Atom, a brainstorming agent. Analyze this Hive task and create subtasks.
 
-## Task: "${title}" (ID: ${task.id})
-## Project: ${projectName} (project_id: ${project_id})
-## Task Type: ${finalTaskType}
-## Spec:
-${spec || 'No spec provided'}
+Task: "${title}" (ID: ${task.id})
+Project: ${projectName} (project_id: ${project_id})
+Task Type: ${finalTaskType}
+Spec: ${spec || 'No spec provided'}
 
-## Instructions:
-1. Post a brainstorm summary to Discord #coding: your understanding of the task + proposed subtasks
-2. Create each subtask via the helper script
+Instructions:
+1. Post a brainstorm summary to Discord #coding using: openclaw message send --channel discord --target 1469649112780636171 --message "YOUR_MESSAGE_HERE"
+2. Create 1-4 subtasks by running sqlite3 commands like: cd /root/.openclaw/workspace/projects/cron-dashboard && sqlite3 data/hive.db "INSERT INTO tasks (project_id, title, spec, status, stage, priority, parent_id, task_type) VALUES (${project_id}, 'TITLE', 'SPEC', 'plan', 'plan', 'normal', ${task.id}, '${finalTaskType}');"
+3. Keep brainstorm concise: understanding (2-3 sentences) + numbered subtask list.
+4. Post to Discord FIRST, then create subtasks.`;
 
-To post to Discord:
-openclaw message send --channel discord --target 1469649112780636171 --message "YOUR_MESSAGE"
-
-To create subtasks:
-cd /root/.openclaw/workspace/projects/cron-dashboard && sqlite3 data/hive.db "INSERT INTO tasks (project_id, title, spec, status, stage, priority, parent_id, task_type) VALUES (${project_id}, 'SUBTASK_TITLE', 'SUBTASK_SPEC', 'plan', 'plan', 'normal', ${task.id}, '${finalTaskType}');"
-
-Create 1-4 focused subtasks that break down the work. Be specific in subtask specs.
-Post the brainstorm to Discord FIRST, then create the subtasks.
-Keep the Discord message concise: task understanding (2-3 sentences) + numbered subtask list.`;
-
+      fs.writeFileSync(promptFile, brainstormPrompt);
       const { execFile } = require('child_process');
       execFile('openclaw', [
         'agent',
-        '--message', brainstormPrompt,
-        '--model', 'anthropic/claude-sonnet-4-5',
+        '--message', fs.readFileSync(promptFile, 'utf8'),
         '--json'
-      ], { timeout: 60000 }, (err, stdout, stderr) => {
-        if (err) console.log('[Hive] Brainstorm agent error:', err.message);
-        else console.log('[Hive] Brainstorm agent completed');
+      ], { timeout: 120000 }, (err, stdout, stderr) => {
+        if (err) console.log('[Hive] Brainstorm agent error:', err.message, stderr);
+        else console.log('[Hive] Brainstorm agent completed:', stdout.substring(0, 200));
+        try { fs.unlinkSync(promptFile); } catch(e) {}
       });
     }
     
