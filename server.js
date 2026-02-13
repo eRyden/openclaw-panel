@@ -958,6 +958,7 @@ Instructions:
       const { execFile } = require('child_process');
       execFile('openclaw', [
         'agent',
+        '--session-id', `hive-brainstorm-${task.id}`,
         '--message', fs.readFileSync(promptFile, 'utf8'),
         '--json'
       ], { timeout: 120000 }, (err, stdout, stderr) => {
