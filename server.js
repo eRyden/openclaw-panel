@@ -932,10 +932,43 @@ app.post('/api/hive/tasks', requireAuth, (req, res) => {
     );
     const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
     
-    // Notify Atom about new task for brainstorming
+    // Auto-brainstorm: spawn agent to analyze spec and create subtasks
     if (!parent_id) {
       const projectName = hiveDb.prepare('SELECT name FROM projects WHERE id = ?').get(project_id)?.name || 'Unknown';
-      notifyAtom(`[Hive] 🐝 New task created in ${projectName}: "${title}" (ID: ${task.id})\n\nSpec:\n${spec || 'No spec provided'}\n\nAtom: Read the spec above and post a brainstorm to #coding with your understanding + proposed subtasks.`);
+      notifyAtom(`[Hive] 🐝 New task created in ${projectName}: "${title}" (ID: ${task.id}). Starting brainstorm...`);
+      
+      const brainstormPrompt = `You are Atom, a brainstorming agent. Analyze this Hive task and create subtasks.
+
+## Task: "${title}" (ID: ${task.id})
+## Project: ${projectName} (project_id: ${project_id})
+## Task Type: ${finalTaskType}
+## Spec:
+${spec || 'No spec provided'}
+
+## Instructions:
+1. Post a brainstorm summary to Discord #coding: your understanding of the task + proposed subtasks
+2. Create each subtask via the helper script
+
+To post to Discord:
+openclaw message send --channel discord --target 1469649112780636171 --message "YOUR_MESSAGE"
+
+To create subtasks:
+cd /root/.openclaw/workspace/projects/cron-dashboard && sqlite3 data/hive.db "INSERT INTO tasks (project_id, title, spec, status, stage, priority, parent_id, task_type) VALUES (${project_id}, 'SUBTASK_TITLE', 'SUBTASK_SPEC', 'plan', 'plan', 'normal', ${task.id}, '${finalTaskType}');"
+
+Create 1-4 focused subtasks that break down the work. Be specific in subtask specs.
+Post the brainstorm to Discord FIRST, then create the subtasks.
+Keep the Discord message concise: task understanding (2-3 sentences) + numbered subtask list.`;
+
+      const { execFile } = require('child_process');
+      execFile('openclaw', [
+        'agent',
+        '--message', brainstormPrompt,
+        '--model', 'anthropic/claude-sonnet-4-5',
+        '--json'
+      ], { timeout: 60000 }, (err, stdout, stderr) => {
+        if (err) console.log('[Hive] Brainstorm agent error:', err.message);
+        else console.log('[Hive] Brainstorm agent completed');
+      });
     }
     
     res.json({ task });
