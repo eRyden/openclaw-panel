@@ -1125,9 +1125,22 @@ app.post('/api/hive/tasks/:id/feedback', requireAuth, (req, res) => {
 
       const combinedSpec = `## Original Task\n${task.title || ''}\n\n### Original Spec\n${task.spec || ''}\n\n## Feedback\n${feedback_text}`;
 
+      // Version numbering: strip existing version/feedback suffix, count linked iterations
+      const baseTitle = task.title.replace(/\s*v\d+(\.\d+)*$/, '').replace(/\s*\(feedback\)*/g, '');
+      const feedbackCount = hiveDb.prepare('SELECT COUNT(*) as count FROM tasks WHERE linked_from_id = ?').get(task.id)?.count || 0;
+      // Walk back to find the root version
+      let version = 1;
+      let walker = task;
+      while (walker.linked_from_id) {
+        version++;
+        walker = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(walker.linked_from_id);
+        if (!walker) break;
+      }
+      const newTitle = `${baseTitle} v${version}.${feedbackCount}`;
+
       const result = insert.run(
         task.project_id,
-        `${task.title} (feedback)`,
+        newTitle,
         combinedSpec,
         task.id,
         feedback_text
