@@ -113,7 +113,7 @@ window.projects = {
 
     const stages = [
       { key: 'plan', label: 'Plan', color: 'text-slate-200', accent: 'bg-slate-700/40 border-slate-600' },
-      { key: 'implement', label: 'Implement', color: 'text-blue-200', accent: 'bg-blue-900/30 border-blue-700/50' },
+      { key: 'implement', label: 'In Progress', color: 'text-blue-200', accent: 'bg-blue-900/30 border-blue-700/50' },
       { key: 'verify', label: 'Verify', color: 'text-amber-200', accent: 'bg-amber-900/20 border-amber-700/40' },
       { key: 'test', label: 'Test', color: 'text-purple-200', accent: 'bg-purple-900/20 border-purple-700/40' },
       { key: 'deploy', label: 'Deploy', color: 'text-cyan-200', accent: 'bg-cyan-900/20 border-cyan-700/40' },
@@ -233,6 +233,9 @@ window.projects = {
     const isSubtask = !!task.parent_id;
     const parentTitle = isSubtask && taskMap ? taskMap[task.parent_id]?.title : null;
     const displayProjectName = isSubtask ? (parentTitle || projectName) : projectName;
+    const taskTypeBadge = task.task_type === 'creative'
+      ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-600/20 text-purple-300 border border-purple-500/30">creative</span>'
+      : '';
 
     const priorityColors = {
       low: 'text-slate-400',
@@ -275,7 +278,10 @@ window.projects = {
           <span class="text-white ${titleSize} font-medium leading-tight">${titlePrefix}${title}</span>
           <span class="text-xs ${priorityColors[priority] || 'text-blue-400'}">●</span>
         </div>
-        <div class="text-slate-500 text-xs">${displayProjectName}</div>
+        <div class="text-slate-500 text-xs flex items-center gap-2">
+          <span>${displayProjectName}</span>
+          ${taskTypeBadge}
+        </div>
         ${parentTag}
         ${showSubtasks ? `
           <div class="w-full h-1.5 bg-slate-700 rounded-full mt-2">
@@ -622,6 +628,13 @@ window.projects = {
               <option value="urgent">Urgent</option>
             </select>
           </div>
+          <div>
+            <label class="block text-sm text-slate-300 mb-1">Task Type</label>
+            <select id="hive-task-type" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-200">
+              <option value="code" selected>Code</option>
+              <option value="creative">Creative</option>
+            </select>
+          </div>
         </div>
         <div class="flex gap-2 mt-6">
           <button onclick="createTask()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium">Create Task</button>
@@ -768,7 +781,12 @@ window.projects = {
 
   async greenlightTask(taskId) {
     try {
-      await fetch(`/api/hive/tasks/${taskId}/greenlight`, { method: 'POST' });
+      const res = await fetch(`/api/hive/tasks/${taskId}/greenlight`, { method: 'POST' });
+      const result = await res.json().catch(() => null);
+      if (!res.ok) {
+        this.showToast(result?.error || 'Failed to greenlight task', 'error');
+        return;
+      }
       this.showToast('Task greenlit', 'success');
       this.loadHiveDashboard();
     } catch (err) {
@@ -893,7 +911,8 @@ window.createTask = () => {
     project_id: document.getElementById('hive-task-project')?.value,
     title: document.getElementById('hive-task-title')?.value,
     spec: document.getElementById('hive-task-spec')?.value,
-    priority: document.getElementById('hive-task-priority')?.value
+    priority: document.getElementById('hive-task-priority')?.value,
+    task_type: document.getElementById('hive-task-type')?.value
   };
   window.projects.createTask(data);
   closeHiveModal();

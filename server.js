@@ -906,14 +906,20 @@ app.get('/api/hive/tasks/:id', requireAuth, (req, res) => {
 
 app.post('/api/hive/tasks', requireAuth, (req, res) => {
   try {
-    const { project_id, title, spec, priority, parent_id, linked_from_id } = req.body || {};
+    const { project_id, title, spec, priority, parent_id, linked_from_id, task_type } = req.body || {};
     if (!project_id || !title) {
       return res.status(400).json({ error: 'project_id and title are required' });
     }
 
+    let finalTaskType = task_type || 'code';
+    if (parent_id) {
+      const parent = hiveDb.prepare('SELECT task_type FROM tasks WHERE id = ?').get(parent_id);
+      finalTaskType = parent?.task_type || 'code';
+    }
+
     const stmt = hiveDb.prepare(`
-      INSERT INTO tasks (project_id, title, spec, priority, parent_id, linked_from_id)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (project_id, title, spec, priority, parent_id, linked_from_id, task_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       project_id,
@@ -921,7 +927,8 @@ app.post('/api/hive/tasks', requireAuth, (req, res) => {
       spec || null,
       priority || 'normal',
       parent_id || null,
-      linked_from_id || null
+      linked_from_id || null,
+      finalTaskType
     );
     const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
     
@@ -991,6 +998,10 @@ app.post('/api/hive/tasks/:id/greenlight', requireAuth, async (req, res) => {
     const subtasks = hiveDb.prepare('SELECT * FROM tasks WHERE parent_id = ?').all(task.id);
     const hasSubtasks = subtasks.length > 0;
 
+    if (newGreenlit && !hasSubtasks) {
+      return res.status(400).json({ error: 'Add subtasks before greenlighting' });
+    }
+
     if (newGreenlit) {
       if (hasSubtasks) {
         nextStatus = 'plan';
@@ -1031,7 +1042,7 @@ app.post('/api/hive/tasks/:id/greenlight', requireAuth, async (req, res) => {
       });
       const projectName = hiveDb.prepare('SELECT name FROM projects WHERE id = ?').get(task.project_id)?.name || 'Unknown';
       const subtaskList = subtasks.map(s => `  - ${s.title} (ID: ${s.id})`).join('\n');
-      notifyAtom(`[Hive] 🚀 Task "${task.title}" (ID: ${task.id}) greenlit in ${projectName}! ${subtasks.length} subtasks starting pipeline:\n${subtaskList}\nSpawn Codex agents for each subtask now.`);
+      notifyAtom(`[Hive] 🚀 Task "${task.title}" (ID: ${task.id}) greenlit [${task.task_type || 'code'}] in ${projectName}! ${subtasks.length} subtasks starting pipeline:\n${subtaskList}\nSpawn Codex agents for each subtask now.`);
     } else if (newGreenlit && task.auto_run) {
       await startPipelineStep(task.id, 'implement');
     }
@@ -1124,9 +1135,10 @@ app.post('/api/hive/tasks/:id/feedback', requireAuth, (req, res) => {
           stage,
           linked_from_id,
           parent_id,
-          feedback_text
+          feedback_text,
+          task_type
         )
-        VALUES (?, ?, ?, 'plan', 'plan', ?, NULL, ?)
+        VALUES (?, ?, ?, 'plan', 'plan', ?, NULL, ?, ?)
       `);
 
       const combinedSpec = `## Original Task\n${task.title || ''}\n\n### Original Spec\n${task.spec || ''}\n\n## Feedback\n${feedback_text}`;
@@ -1149,7 +1161,8 @@ app.post('/api/hive/tasks/:id/feedback', requireAuth, (req, res) => {
         newTitle,
         combinedSpec,
         task.id,
-        feedback_text
+        feedback_text,
+        task.task_type || 'code'
       );
 
       hiveDb.prepare(`
@@ -1318,6 +1331,7 @@ app.get('/api/hive/dashboard', requireAuth, (req, res) => {
         t.status,
         t.stage,
         t.priority,
+        t.task_type,
         t.greenlit,
         t.parent_id,
         t.linked_from_id,
@@ -1350,6 +1364,7 @@ app.get('/api/hive/dashboard', requireAuth, (req, res) => {
         t.status,
         t.stage,
         t.priority,
+        t.task_type,
         t.greenlit,
         t.parent_id,
         t.linked_from_id,
@@ -1410,6 +1425,7 @@ app.get('/api/hive/dashboard', requireAuth, (req, res) => {
         stage: task.stage,
         priority: task.priority,
         greenlit: task.greenlit,
+        task_type: task.task_type || 'code',
         parent_id: task.parent_id || null,
         linked_from_id: task.linked_from_id || null,
         created_at: task.created_at,
