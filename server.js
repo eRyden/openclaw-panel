@@ -597,46 +597,43 @@ function getNextStage(stage) {
 }
 
 const PIPELINE_STAGE_SEQUENCE = ['implement', 'verify', 'test', 'deploy', 'done'];
+const CREATIVE_STAGE_SEQUENCE = ['implement', 'done'];
 
-function getNextPipelineStage(stage) {
-  const idx = PIPELINE_STAGE_SEQUENCE.indexOf(stage);
+function getNextPipelineStage(stage, taskType) {
+  const sequence = taskType === 'creative' ? CREATIVE_STAGE_SEQUENCE : PIPELINE_STAGE_SEQUENCE;
+  const idx = sequence.indexOf(stage);
   if (idx === -1) return null;
-  return PIPELINE_STAGE_SEQUENCE[idx + 1] || null;
+  return sequence[idx + 1] || null;
 }
 
 function spawnAgent(taskPrompt, taskId, stage) {
   return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({
-      message: taskPrompt,
-      model: 'openai-codex/gpt-5.2-codex'
-    });
+    const { execFile } = require('child_process');
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const promptFile = path.join(os.tmpdir(), `hive-agent-${taskId}-${stage}.txt`);
+    fs.writeFileSync(promptFile, taskPrompt);
 
-    const options = {
-      hostname: '127.0.0.1',
-      port: 4444,
-      path: '/api/sessions/spawn',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + process.env.OPENCLAW_TOKEN,
-        'Content-Length': Buffer.byteLength(payload)
-      }
-    };
-
-    const req = http.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
+    execFile('openclaw', [
+      'agent',
+      '--session-id', `hive-pipeline-${taskId}-${stage}`,
+      '--message', fs.readFileSync(promptFile, 'utf8'),
+      '--json'
+    ], { timeout: 300000 }, (err, stdout, stderr) => {
+      try { fs.unlinkSync(promptFile); } catch(e) {}
+      if (err) {
+        console.log(`[Hive] Agent spawn error (task ${taskId}, ${stage}):`, err.message);
+        resolve({ error: err.message });
+      } else {
+        console.log(`[Hive] Agent completed (task ${taskId}, ${stage})`);
         try {
-          resolve(JSON.parse(data));
-        } catch (e) {
-          resolve({ raw: data });
+          resolve(JSON.parse(stdout));
+        } catch(e) {
+          resolve({ raw: stdout });
         }
-      });
+      }
     });
-    req.on('error', reject);
-    req.write(payload);
-    req.end();
   });
 }
 
@@ -691,22 +688,27 @@ INSTRUCTIONS:
 3. If issues found: fix them and commit
 4. ${callbackInstructions}`,
 
-    test: `You are a testing agent. Do NOT spawn sub-agents.
+    test: `You are a testing agent using Systematic Debugging methodology. Do NOT spawn sub-agents.
 
 PROJECT: ${project.repo_path}
 TASK: ${task.title}
-
 SPEC:
 ${task.spec}
 
 PREVIOUS STEP OUTPUT:
 ${previousOutput || 'N/A'}
 
+SYSTEMATIC DEBUGGING (Phase 3-4: Hypothesis Testing + Verification):
+- Test each acceptance criterion with the smallest possible test
+- One test at a time, verify before moving to next
+- If something fails, gather evidence (error messages, responses, logs)
+
 INSTRUCTIONS:
-1. Review the implemented code on branch task-${task.id}-implement
-2. Test the changes: start the server if needed, hit API endpoints, verify responses
-3. Check for regressions in existing functionality
-4. ${callbackInstructions}`,
+1. Start the server if needed (pm2 restart or node)
+2. For each spec requirement, test it (curl endpoints, check files, trace logic)
+3. Report pass/fail for each criterion
+4. If ALL pass: call advance. If ANY fail: call fail with test results.
+5. ${callbackInstructions}`,
 
     deploy: `You are a deployment agent. Do NOT spawn sub-agents.
 
@@ -1243,7 +1245,7 @@ app.post('/api/hive/pipeline/:taskId/advance', requireAuth, async (req, res) => 
 
     logStep(currentRun.id, 'success', `Step completed: ${currentStage}`);
 
-    const nextStage = getNextPipelineStage(currentStage);
+    const nextStage = getNextPipelineStage(currentStage, task.task_type);
 
     if (!nextStage || nextStage === 'done') {
       hiveDb.prepare(`

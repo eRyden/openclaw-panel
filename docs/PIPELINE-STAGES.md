@@ -14,7 +14,7 @@ Each pipeline stage has a specific role, model, and skill set. When spawning age
 - File context (which files to edit)
 
 ## Stage: Verify
-**Model:** anthropic/claude-sonnet-4-5 (Sonnet is better at careful review)
+**Model (code):** openai-codex/gpt-5.2-codex
 **Skills:** Systematic Debugging (Phase 1-2: investigation + pattern analysis)
 **Role:** Code review against spec. Find bugs, ID mismatches, missing error handling.
 **Prompt includes:**
