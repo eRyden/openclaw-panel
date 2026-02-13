@@ -8,6 +8,32 @@ const fs = require('fs');
 const crypto = require('crypto');
 const Database = require('better-sqlite3');
 
+// --- Hive Notification Helper ---
+function notifyAtom(message) {
+  const { execFile } = require('child_process');
+  
+  // 1. System event to wake Atom's session immediately
+  execFile('openclaw', [
+    'system', 'event',
+    '--text', message,
+    '--mode', 'now'
+  ], (err, stdout, stderr) => {
+    if (err) console.log('[Hive] System event error:', err.message, stderr);
+    else console.log('[Hive] System event sent');
+  });
+  
+  // 2. Discord message to #coding so Erik sees it too
+  execFile('openclaw', [
+    'message', 'send',
+    '--channel', 'discord',
+    '--target', '1469649112780636171',
+    '--message', message
+  ], (err, stdout, stderr) => {
+    if (err) console.log('[Hive] Discord notification error:', err.message, stderr);
+    else console.log('[Hive] Discord notification sent');
+  });
+}
+
 // Load config.json with fallback to defaults
 let config = {};
 try {
@@ -898,6 +924,13 @@ app.post('/api/hive/tasks', requireAuth, (req, res) => {
       linked_from_id || null
     );
     const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
+    
+    // Notify Atom about new task for brainstorming
+    if (!parent_id) {
+      const projectName = hiveDb.prepare('SELECT name FROM projects WHERE id = ?').get(project_id)?.name || 'Unknown';
+      notifyAtom(`[Hive] 🐝 New task created in ${projectName}: "${title}" (ID: ${task.id}). Ready to brainstorm specs when Erik is.`);
+    }
+    
     res.json({ task });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -123,7 +123,7 @@ window.projects = {
     const archived = this.hiveData?.archived || [];
 
     kanban.innerHTML = `
-      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+      <div class="grid grid-cols-6 gap-3" style="min-width: 900px;">
         ${stages.map(stage => {
           const tasks = stageTasks[stage.key] || [];
           const count = tasks.length;
@@ -325,8 +325,17 @@ window.projects = {
 
   async showTaskDetail(taskId) {
     try {
-      const res = await fetch(`/api/hive/tasks/${taskId}`);
-      const task = await res.json();
+      const [taskRes, tasksRes] = await Promise.all([
+        fetch(`/api/hive/tasks/${taskId}`),
+        fetch('/api/hive/tasks')
+      ]);
+      const task = await taskRes.json();
+      const allTasks = await tasksRes.json();
+      const tasksList = allTasks?.tasks || allTasks || [];
+      const subtasks = Array.isArray(tasksList)
+        ? tasksList.filter(item => String(item.parent_id) === String(taskId))
+        : [];
+      task.subtasks = subtasks;
       this.renderTaskPanel(task);
     } catch (err) {
       console.error('Failed to load task detail:', err);
@@ -353,6 +362,40 @@ window.projects = {
     const priority = (task.priority || 'normal').toLowerCase();
     const status = (task.status || 'plan').toLowerCase();
     const projectName = task.project_name || task.project?.name || 'Unknown Project';
+
+    const subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
+    const subtaskStatusStyles = {
+      done: 'bg-green-600/20 text-green-300 border-green-500/40',
+      running: 'bg-blue-600/20 text-blue-300 border-blue-500/40 animate-pulse',
+      failed: 'bg-red-600/20 text-red-300 border-red-500/40',
+      plan: 'bg-slate-800 text-slate-300 border-slate-700'
+    };
+    const subtasksSection = subtasks.length ? `
+      <div class="mb-6">
+        <h4 class="text-sm font-semibold text-slate-200 mb-2">Subtasks</h4>
+        <div class="flex flex-col gap-2">
+          ${subtasks.map(subtask => {
+            const rawStatus = (subtask.status || '').toLowerCase();
+            const rawStage = (subtask.stage || '').toLowerCase();
+            const normalized = ['done', 'running', 'failed'].includes(rawStatus)
+              ? rawStatus
+              : (rawStage === 'done' ? 'done' : rawStage === 'running' ? 'running' : rawStage === 'failed' ? 'failed' : 'plan');
+            const statusLabel = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+            const stageLabel = (subtask.stage || 'plan').toString();
+            const statusClass = subtaskStatusStyles[normalized] || subtaskStatusStyles.plan;
+            return `
+              <div class="flex items-center justify-between gap-2 bg-slate-950/40 border border-slate-800 rounded-lg px-3 py-2 text-xs">
+                <span class="text-slate-200">${subtask.title || 'Untitled'}</span>
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 rounded-full border ${statusClass}">${statusLabel}</span>
+                  <span class="px-2 py-0.5 rounded-full border bg-slate-800 text-slate-300 border-slate-700">${stageLabel}</span>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    ` : '';
 
     content.innerHTML = `
       <div class="p-6">
@@ -382,20 +425,7 @@ window.projects = {
           </div>
         ` : ''}
 
-        ${Array.isArray(task.subtasks) && task.subtasks.length ? `
-          <div class="mb-6">
-            <h4 class="text-sm font-semibold text-slate-200 mb-2">Subtasks</h4>
-            <div class="flex flex-col gap-1 text-xs text-slate-300">
-              ${task.subtasks.map(subtask => {
-                const subStatus = (subtask.status || subtask.stage || '').toLowerCase();
-                const symbol = subStatus === 'done' || subStatus === 'completed' ? '✓' : subStatus === 'running' ? '●' : '○';
-                const duration = subtask.duration_ms ? `${Math.round(subtask.duration_ms / 60000)}m` : (subtask.duration ? subtask.duration : '');
-                const detail = duration ? ` — ${duration}` : '';
-                return `<div>${symbol} ${subtask.title || 'Untitled'}${detail}</div>`;
-              }).join('')}
-            </div>
-          </div>
-        ` : ''}
+        ${subtasksSection}
 
         <div class="mb-6">
           <h4 class="text-sm font-semibold text-slate-200 mb-3">Pipeline Timeline</h4>
@@ -547,19 +577,35 @@ window.projects = {
       </div>
     `;
     document.body.appendChild(modal);
+
+    const selectedProject = window.projects.selectedProject;
+    const projectSelect = document.getElementById('hive-task-project');
+    if (projectSelect) {
+      if (selectedProject && selectedProject !== 'all') {
+        projectSelect.value = selectedProject;
+      } else {
+        const generalOption = Array.from(projectSelect.options).find(option => option.textContent?.trim() === 'General');
+        if (generalOption) {
+          projectSelect.value = generalOption.value;
+        } else if (projectSelect.options.length) {
+          projectSelect.value = projectSelect.options[0].value;
+        }
+      }
+    }
+
     if (typeof lucide !== 'undefined') lucide.createIcons();
   },
 
   async showNewProjectModal() {
     const modal = document.createElement('div');
     modal.id = 'hive-project-modal';
-    modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+    modal.className = 'fixed inset-0 z-[60] flex items-center justify-center p-4';
     modal.innerHTML = `
-      <div class="absolute inset-0 bg-black/50" onclick="closeHiveModal()"></div>
+      <div class="absolute inset-0 bg-black/50" onclick="document.getElementById('hive-project-modal')?.remove()"></div>
       <div class="relative bg-slate-800 rounded-lg border border-slate-700 w-full max-w-lg p-6">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-lg font-bold text-white">New Project</h3>
-          <button onclick="closeHiveModal()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+          <button onclick="document.getElementById('hive-project-modal')?.remove()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
         </div>
         <div class="space-y-4">
           <div>
@@ -577,7 +623,7 @@ window.projects = {
         </div>
         <div class="flex gap-2 mt-6">
           <button onclick="createProject()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium">Create Project</button>
-          <button onclick="closeHiveModal()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-sm">Cancel</button>
+          <button onclick="document.getElementById('hive-project-modal')?.remove()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-sm">Cancel</button>
         </div>
       </div>
     `;
@@ -638,17 +684,25 @@ window.projects = {
 
   async createProject(data) {
     try {
-      await fetch('/api/hive/projects', {
+      const res = await fetch('/api/hive/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
+      const created = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message = created?.error || 'Failed to create project';
+        this.showToast(message, 'error');
+        return null;
+      }
       this.showToast('Project created', 'success');
-      this.fetchProjects();
+      await this.fetchProjects();
       this.loadHiveDashboard();
+      return created;
     } catch (err) {
       console.error('Failed to create project:', err);
       this.showToast('Failed to create project', 'error');
+      return null;
     }
   },
 
@@ -784,14 +838,44 @@ window.createTask = () => {
   window.projects.createTask(data);
   closeHiveModal();
 };
-window.createProject = () => {
+window.createProject = async () => {
   const data = {
     name: document.getElementById('hive-project-name')?.value,
     description: document.getElementById('hive-project-description')?.value,
     repo_path: document.getElementById('hive-project-repo')?.value
   };
-  window.projects.createProject(data);
-  closeHiveModal();
+  const created = await window.projects.createProject(data);
+  if (!created) return;
+
+  const projectModal = document.getElementById('hive-project-modal');
+  if (projectModal) projectModal.remove();
+
+  const taskModal = document.getElementById('hive-task-modal');
+  const projectSelect = document.getElementById('hive-task-project');
+  if (taskModal && projectSelect) {
+    const titleValue = document.getElementById('hive-task-title')?.value || '';
+    const specValue = document.getElementById('hive-task-spec')?.value || '';
+    const priorityValue = document.getElementById('hive-task-priority')?.value || 'normal';
+
+    const projects = window.projects.projectCache || [];
+    projectSelect.innerHTML = projects.map(project => `<option value="${project.id}">${project.name}</option>`).join('');
+
+    let newProjectId = created?.id || created?.project_id || created?.project?.id;
+    if (!newProjectId && data.name) {
+      const match = projects.find(project => project.name === data.name);
+      newProjectId = match?.id;
+    }
+    if (newProjectId) {
+      projectSelect.value = String(newProjectId);
+    }
+
+    const titleInput = document.getElementById('hive-task-title');
+    const specInput = document.getElementById('hive-task-spec');
+    const priorityInput = document.getElementById('hive-task-priority');
+    if (titleInput) titleInput.value = titleValue;
+    if (specInput) specInput.value = specValue;
+    if (priorityInput) priorityInput.value = priorityValue;
+  }
 };
 window.updateTask = (taskId) => {
   const data = {

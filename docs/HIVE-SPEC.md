@@ -1,7 +1,24 @@
 # Project Hive — Autonomous Task Pipeline
 
 ## Overview
-An autonomous task pipeline built into the Atom Control Center. Tasks flow through Plan → Implement → Verify → Test → Deploy with zero babysitting. Codex agents do the work, the server orchestrates, Atom intervenes only on failures.
+An autonomous task pipeline built into the Atom Control Center. Erik creates tasks, Atom brainstorms specs and breaks them into subtasks, then the pipeline runs autonomously.
+
+## Core Workflow
+1. **Erik creates a task** in the Hive UI → Atom gets pinged instantly in #coding (Discord notification)
+2. **Atom + Erik brainstorm** the spec — Atom asks clarifying questions, nails down requirements
+3. **Atom creates subtasks** under the parent task — each subtask is a discrete work unit listed on the parent card
+4. **Erik greenlights** (UI toggle or tells Atom) → pipeline launches automatically
+5. **Each subtask gets its own Codex sub-agent**, specialized per stage: Implement → Verify → Test → Deploy
+6. **Pipeline is fully autonomous** — self-propelling through stages. Atom only intervenes on failures. Erik only gets pinged if Atom can't fix it.
+7. **All subtasks done** → parent card moves from Plan → Done
+8. **Erik reviews** → **Archive** (ship it) or **Feedback** (describe what needs changing → creates linked task 1.1, archives original, new task flows through pipeline again)
+
+## Key Principles
+- **Erik sets direction, Atom architects + reviews, sub-agents implement**
+- **Parent task = spec ("what"), subtasks = work units ("how")**
+- **Parent stays in Plan as tracker** while subtasks flow through the pipeline
+- **Atom is NOT a bottleneck** — pipeline auto-advances. Atom only steps in on failures.
+- **Escalation chain**: Sub-agent fails → auto-retry (max 2) → Atom investigates → Erik notified as last resort
 
 ## Database Schema (hive.db)
 
