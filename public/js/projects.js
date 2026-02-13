@@ -203,8 +203,10 @@ window.projects = {
       stages[key] = stages[key].filter(task => {
         const isSubtask = !!task.parent_id;
         const isParent = parentIdSet.has(task.id);
-        // Subtasks: only show in middle columns (implement/verify/test/deploy), never plan/done
+        // Subtasks: only show in active pipeline columns, never plan/done
         if (isSubtask && ['plan', 'done'].includes(key)) return false;
+        // Subtasks in plan stage haven't started yet — hide them entirely
+        if (isSubtask && (task.stage === 'plan' || task.status === 'plan')) return false;
         // Parents: only show in plan/done, never middle columns
         if (isParent && !['plan', 'done'].includes(key)) return false;
         return true;
