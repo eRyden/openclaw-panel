@@ -1126,6 +1126,11 @@ app.post('/api/hive/tasks/:id/feedback', requireAuth, (req, res) => {
 
     const newTaskId = createFeedback();
     const newTask = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(newTaskId);
+    
+    // Notify Atom about feedback task
+    const projectName = hiveDb.prepare('SELECT name FROM projects WHERE id = ?').get(task.project_id)?.name || 'Unknown';
+    notifyAtom(`[Hive] 🔄 Feedback task created: "${newTask.title}" (ID: ${newTaskId}) in ${projectName}. Original task ${task.id} archived. Ready to review feedback.`);
+    
     res.json({ task: newTask });
   } catch (err) {
     res.status(500).json({ error: err.message });

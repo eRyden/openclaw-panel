@@ -3,6 +3,7 @@
 window.projects = {
   hiveData: null,
   selectedProject: 'all',
+  archiveOpen: false,
   pollInterval: null,
   projectCache: [],
 
@@ -145,9 +146,9 @@ window.projects = {
           <i data-lucide="archive" class="w-4 h-4"></i>
           <span>Archive</span>
           <span id="archiveCount" class="text-xs bg-slate-700 px-2 py-0.5 rounded-full">${archived.length}</span>
-          <i data-lucide="chevron-down" id="archiveChevron" class="w-4 h-4 transition-transform"></i>
+          <i data-lucide="chevron-down" id="archiveChevron" class="w-4 h-4 transition-transform" style="${this.archiveOpen ? 'transform:rotate(180deg)' : ''}"></i>
         </button>
-        <div id="archiveContainer" class="hidden mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+        <div id="archiveContainer" class="${this.archiveOpen ? '' : 'hidden'} mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
           ${archived.length ? archived.map(task => this.renderArchivedTaskCard(task)).join('') : '<div class="text-slate-600 text-xs">No archived tasks.</div>'}
         </div>
       </div>
@@ -920,7 +921,8 @@ window.toggleArchive = () => {
   const chevron = document.getElementById('archiveChevron');
   if (!container || !chevron) return;
   container.classList.toggle('hidden');
-  chevron.style.transform = container.classList.contains('hidden') ? '' : 'rotate(180deg)';
+  window.projects.archiveOpen = !container.classList.contains('hidden');
+  chevron.style.transform = window.projects.archiveOpen ? 'rotate(180deg)' : '';
 };
 window.showFeedbackModal = (taskId) => window.projects.showFeedbackModal(taskId);
 window.submitFeedback = (taskId) => window.projects.submitFeedback(taskId);
