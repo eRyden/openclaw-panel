@@ -1020,12 +1020,18 @@ app.post('/api/hive/tasks/:id/greenlight', requireAuth, async (req, res) => {
       const markGreenlit = hiveDb.prepare(`
         UPDATE tasks
         SET greenlit = 1,
+            status = 'running',
+            stage = 'implement',
+            started_at = datetime('now'),
             updated_at = datetime('now')
         WHERE id = ?
       `);
       subtasks.forEach(subtask => {
         markGreenlit.run(subtask.id);
       });
+      const projectName = hiveDb.prepare('SELECT name FROM projects WHERE id = ?').get(task.project_id)?.name || 'Unknown';
+      const subtaskList = subtasks.map(s => `  - ${s.title} (ID: ${s.id})`).join('\n');
+      notifyAtom(`[Hive] 🚀 Task "${task.title}" (ID: ${task.id}) greenlit in ${projectName}! ${subtasks.length} subtasks starting pipeline:\n${subtaskList}\nSpawn Codex agents for each subtask now.`);
     } else if (newGreenlit && task.auto_run) {
       await startPipelineStep(task.id, 'implement');
     }
