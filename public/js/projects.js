@@ -669,11 +669,18 @@ window.projects = {
 
   async createTask(data) {
     try {
-      await fetch('/api/hive/tasks', {
+      console.log('[Hive] Creating task:', JSON.stringify(data));
+      const res = await fetch('/api/hive/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
+      const result = await res.json().catch(() => null);
+      console.log('[Hive] Create task response:', res.status, result);
+      if (!res.ok) {
+        this.showToast(result?.error || 'Failed to create task', 'error');
+        return;
+      }
       this.showToast('Task created', 'success');
       this.loadHiveDashboard();
     } catch (err) {
