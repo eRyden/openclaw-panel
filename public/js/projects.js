@@ -120,22 +120,42 @@ window.projects = {
     ];
 
     const stageTasks = this.getStageTasks();
+    const archived = this.hiveData?.archived || [];
 
-    kanban.innerHTML = stages.map(stage => {
-      const tasks = stageTasks[stage.key] || [];
-      const count = tasks.length;
-      return `
-        <div class="bg-slate-900/60 border border-slate-600 rounded-xl p-3 flex flex-col min-h-[520px]">
-          <div class="flex items-center justify-between mb-3 px-2 py-2 rounded-lg border ${stage.accent}">
-            <span class="text-sm font-semibold ${stage.color}">${stage.label}</span>
-            <span class="text-xs font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">${count}</span>
-          </div>
-          <div class="flex-1 overflow-y-auto pr-1" style="max-height: 520px;">
-            ${tasks.length ? tasks.map(task => this.renderTaskCard(task)).join('') : '<div class="text-slate-600 text-xs text-center py-6">No tasks</div>'}
-          </div>
+    kanban.innerHTML = `
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        ${stages.map(stage => {
+          const tasks = stageTasks[stage.key] || [];
+          const count = tasks.length;
+          return `
+            <div class=\"bg-slate-900/60 border border-slate-600 rounded-xl p-3 flex flex-col min-h-[520px]\">
+              <div class=\"flex items-center justify-between mb-3 px-2 py-2 rounded-lg border ${stage.accent}\">
+                <span class=\"text-sm font-semibold ${stage.color}\">${stage.label}</span>
+                <span class=\"text-xs font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300\">${count}</span>
+              </div>
+              <div class=\"flex-1 overflow-y-auto pr-1\" style=\"max-height: 520px;\">
+                ${tasks.length ? tasks.map(task => this.renderTaskCard(task)).join('') : '<div class="text-slate-600 text-xs text-center py-6">No tasks</div>'}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      <div class="mt-8 border-t border-slate-700 pt-4">
+        <button onclick="toggleArchive()" class="flex items-center gap-2 text-slate-400 hover:text-slate-200 transition">
+          <i data-lucide="archive" class="w-4 h-4"></i>
+          <span>Archive</span>
+          <span id="archiveCount" class="text-xs bg-slate-700 px-2 py-0.5 rounded-full">${archived.length}</span>
+          <i data-lucide="chevron-down" id="archiveChevron" class="w-4 h-4 transition-transform"></i>
+        </button>
+        <div id="archiveContainer" class="hidden mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+          ${archived.length ? archived.map(task => this.renderArchivedTaskCard(task)).join('') : '<div class="text-slate-600 text-xs">No archived tasks.</div>'}
         </div>
-      `;
-    }).join('');
+      </div>
+    `;
+
+    if (typeof lucide !== 'undefined') {
+      lucide.createIcons();
+    }
   },
 
   getStageTasks() {
@@ -200,6 +220,23 @@ window.projects = {
         : `<button onclick="greenlightTask(${task.id})" class="text-xs px-2 py-1 rounded-md bg-amber-600/20 text-amber-300 border border-amber-500/40 hover:bg-amber-600/40">Greenlight</button>`)
       : '';
 
+    const subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
+    const subtaskCount = task.subtask_count ?? subtasks.length;
+    const completedSubtasks = subtasks.filter(subtask => ['done', 'completed', 'complete'].includes((subtask.status || subtask.stage || '').toLowerCase())).length;
+    const progressCount = subtaskCount ? (subtasks.length ? completedSubtasks : (task.subtask_completed_count ?? 0)) : 0;
+    const progressPercent = subtaskCount ? Math.min(100, Math.round((progressCount / subtaskCount) * 100)) : 0;
+    const showSubtasks = subtaskCount > 0;
+
+    const parentName = task.parent_title || task.parent_task_title || task.parent?.title || task.parent_task?.title;
+    const parentTag = parentName ? `<span class="text-xs text-slate-500">↳ ${parentName}</span>` : '';
+
+    const doneButtons = stage === 'done' ? `
+      <div class="flex gap-2 mt-2 pt-2 border-t border-slate-700">
+        <button onclick="event.stopPropagation(); showFeedbackModal(${task.id})" class="flex-1 text-xs px-2 py-1 rounded bg-blue-600/20 text-blue-300 border border-blue-500/30 hover:bg-blue-600/30">Feedback</button>
+        <button onclick="event.stopPropagation(); archiveTask(${task.id})" class="flex-1 text-xs px-2 py-1 rounded bg-slate-600/20 text-slate-300 border border-slate-500/30 hover:bg-slate-600/30">Archive</button>
+      </div>
+    ` : '';
+
     return `
       <div class="bg-slate-800 border border-slate-700 rounded-lg p-3 mb-2 cursor-pointer hover:border-slate-500 transition" onclick="showTaskDetail(${task.id})">
         <div class="flex items-start justify-between mb-1 gap-2">
@@ -207,10 +244,18 @@ window.projects = {
           <span class="text-xs ${priorityColors[priority] || 'text-blue-400'}">●</span>
         </div>
         <div class="text-slate-500 text-xs">${projectName}</div>
+        ${parentTag}
+        ${showSubtasks ? `
+          <div class="w-full h-1.5 bg-slate-700 rounded-full mt-2">
+            <div class="h-1.5 bg-blue-500 rounded-full" style="width: ${progressPercent}%"></div>
+          </div>
+          <span class="text-xs text-slate-400">${progressCount}/${subtaskCount} subtasks</span>
+        ` : ''}
         <div class="flex items-center justify-between mt-2">
           <span class="text-xs text-slate-400">${time}</span>
           <div class="flex items-center gap-2">${greenlightButton}${statusIndicator}</div>
         </div>
+        ${doneButtons}
       </div>
     `;
   },
@@ -233,6 +278,24 @@ window.projects = {
     if (status === 'failed') return '<span class="text-xs text-red-400">✕</span>';
     if (status === 'done') return '<span class="text-xs text-green-400">✓</span>';
     return '';
+  },
+
+  renderArchivedTaskCard(task) {
+    const title = task.title || 'Untitled Task';
+    const projectName = task.project_name || task.project?.name || task.project || 'Unknown Project';
+    const completed = this.timeAgo(task.completed_at || task.updated_at || task.created_at);
+    const linkedId = task.linked_from_id || task.linked_from?.id || task.linked_from_task?.id;
+    const linkedTitle = task.linked_from_title || task.linked_from?.title || task.linked_from_task?.title;
+    const linkedLabel = linkedTitle ? `Iteration of: ${linkedTitle}` : '';
+
+    return `
+      <div class="bg-slate-900/70 border border-slate-700 rounded-lg p-3">
+        <div class="text-white text-sm font-medium">${title}</div>
+        <div class="text-xs text-slate-500 mt-1">${projectName}</div>
+        <div class="text-xs text-slate-400 mt-2">Completed ${completed}</div>
+        ${linkedLabel ? `<div class="text-xs text-slate-500 mt-1"><button class="text-blue-400 hover:text-blue-300" onclick="showTaskDetail(${linkedId})">${linkedLabel}</button></div>` : ''}
+      </div>
+    `;
   },
 
   deriveProjectsFromTasks() {
@@ -311,6 +374,28 @@ window.projects = {
           <h4 class="text-sm font-semibold text-slate-200 mb-2">Spec</h4>
           <pre class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-slate-300 whitespace-pre-wrap">${task.spec || 'No spec provided.'}</pre>
         </div>
+
+        ${task.linked_from_id || task.linked_from?.id ? `
+          <div class="mb-6">
+            <h4 class="text-sm font-semibold text-slate-200 mb-2">Iteration</h4>
+            <button class="text-xs text-blue-400 hover:text-blue-300" onclick="showTaskDetail(${task.linked_from_id || task.linked_from?.id})">Iteration of: ${task.linked_from_title || task.linked_from?.title || 'Original Task'}</button>
+          </div>
+        ` : ''}
+
+        ${Array.isArray(task.subtasks) && task.subtasks.length ? `
+          <div class="mb-6">
+            <h4 class="text-sm font-semibold text-slate-200 mb-2">Subtasks</h4>
+            <div class="flex flex-col gap-1 text-xs text-slate-300">
+              ${task.subtasks.map(subtask => {
+                const subStatus = (subtask.status || subtask.stage || '').toLowerCase();
+                const symbol = subStatus === 'done' || subStatus === 'completed' ? '✓' : subStatus === 'running' ? '●' : '○';
+                const duration = subtask.duration_ms ? `${Math.round(subtask.duration_ms / 60000)}m` : (subtask.duration ? subtask.duration : '');
+                const detail = duration ? ` — ${duration}` : '';
+                return `<div>${symbol} ${subtask.title || 'Untitled'}${detail}</div>`;
+              }).join('')}
+            </div>
+          </div>
+        ` : ''}
 
         <div class="mb-6">
           <h4 class="text-sm font-semibold text-slate-200 mb-3">Pipeline Timeline</h4>
@@ -500,6 +585,29 @@ window.projects = {
     if (typeof lucide !== 'undefined') lucide.createIcons();
   },
 
+  showFeedbackModal(taskId) {
+    const modal = document.createElement('div');
+    modal.id = 'hive-feedback-modal';
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
+    modal.innerHTML = `
+      <div class="absolute inset-0 bg-black/50" onclick="closeHiveModal()"></div>
+      <div class="relative bg-slate-800 rounded-lg border border-slate-700 w-full max-w-lg p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-bold text-white">Send Feedback</h3>
+          <button onclick="closeHiveModal()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <p class="text-sm text-slate-400 mb-4">This will archive the current task and create a new iteration with your feedback.</p>
+        <textarea id="hive-feedback-text" rows="6" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-200" placeholder="Your feedback..."></textarea>
+        <div class="flex gap-2 mt-6">
+          <button onclick="submitFeedback(${taskId})" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium">Submit Feedback</button>
+          <button onclick="closeHiveModal()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-sm">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  },
+
   async fetchProjects() {
     try {
       const res = await fetch('/api/hive/projects');
@@ -624,6 +732,33 @@ window.projects = {
       console.error('Failed to update task:', err);
       this.showToast('Failed to update task', 'error');
     }
+  },
+
+  async archiveTask(taskId) {
+    if (!confirm('Archive this task?')) return;
+    try {
+      await fetch(`/api/hive/tasks/${taskId}/archive`, { method: 'POST' });
+      this.showToast('Task archived', 'info');
+      this.loadHiveDashboard();
+    } catch (err) {
+      this.showToast('Failed to archive', 'error');
+    }
+  },
+
+  async submitFeedback(taskId) {
+    const feedback = document.getElementById('hive-feedback-text')?.value || '';
+    try {
+      await fetch(`/api/hive/tasks/${taskId}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feedback_text: feedback })
+      });
+      this.showToast('Feedback task created', 'success');
+      closeHiveModal();
+      this.loadHiveDashboard();
+    } catch (err) {
+      this.showToast('Failed to submit feedback', 'error');
+    }
   }
 };
 
@@ -683,7 +818,17 @@ window.deleteProject = async (projectId) => {
 };
 window.closeHivePanel = () => window.projects.closePanel();
 window.closeHiveModal = () => {
-  const modal = document.getElementById('hive-task-modal') || document.getElementById('hive-project-modal');
+  const modal = document.getElementById('hive-task-modal') || document.getElementById('hive-project-modal') || document.getElementById('hive-feedback-modal');
   if (modal) modal.remove();
 };
 window.showEditTaskModal = (taskId) => window.projects.showEditTaskModal(taskId);
+window.archiveTask = (taskId) => window.projects.archiveTask(taskId);
+window.toggleArchive = () => {
+  const container = document.getElementById('archiveContainer');
+  const chevron = document.getElementById('archiveChevron');
+  if (!container || !chevron) return;
+  container.classList.toggle('hidden');
+  chevron.style.transform = container.classList.contains('hidden') ? '' : 'rotate(180deg)';
+};
+window.showFeedbackModal = (taskId) => window.projects.showFeedbackModal(taskId);
+window.submitFeedback = (taskId) => window.projects.submitFeedback(taskId);
