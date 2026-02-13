@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const { exec, spawn } = require('child_process');
+const http = require('http');
 const path = require('path');
 const session = require('express-session');
 const fs = require('fs');
@@ -569,6 +570,197 @@ function getNextStage(stage) {
   return HIVE_STAGES[idx + 1] || null;
 }
 
+const PIPELINE_STAGE_SEQUENCE = ['implement', 'verify', 'test', 'deploy', 'done'];
+
+function getNextPipelineStage(stage) {
+  const idx = PIPELINE_STAGE_SEQUENCE.indexOf(stage);
+  if (idx === -1) return null;
+  return PIPELINE_STAGE_SEQUENCE[idx + 1] || null;
+}
+
+function spawnAgent(taskPrompt, taskId, stage) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({
+      message: taskPrompt,
+      model: 'openai-codex/gpt-5.2-codex'
+    });
+
+    const options = {
+      hostname: '127.0.0.1',
+      port: 4444,
+      path: '/api/sessions/spawn',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + process.env.OPENCLAW_TOKEN,
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    };
+
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          resolve({ raw: data });
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+function logStep(runId, level, message) {
+  hiveDb.prepare(`
+    INSERT INTO step_logs (run_id, level, message)
+    VALUES (?, ?, ?)
+  `).run(runId, level, message);
+}
+
+function buildAgentPrompt(task, project, stage, previousOutput, errorContext) {
+  const baseUrl = 'http://127.0.0.1:3000';
+  const advanceUrl = `${baseUrl}/api/hive/pipeline/${task.id}/advance`;
+  const failUrl = `${baseUrl}/api/hive/pipeline/${task.id}/fail`;
+
+  const callbackInstructions = `
+CRITICAL: When you are completely done, you MUST call one of these endpoints:
+- On SUCCESS: POST to ${advanceUrl} with body {"output": "Brief summary of what you did"}
+- On FAILURE: POST to ${failUrl} with body {"error": "What went wrong"}
+Use curl or fetch to make the HTTP call. This is mandatory — the pipeline depends on it.
+`;
+
+  const templates = {
+    implement: `You are a coding agent implementing a feature. Do NOT spawn sub-agents.
+
+PROJECT: ${project.repo_path}
+TASK: ${task.title}
+
+SPEC:
+${task.spec}
+
+INSTRUCTIONS:
+1. Create a git worktree branch: task-${task.id}-implement
+2. Implement all changes described in the spec
+3. Commit your changes
+4. ${callbackInstructions}`,
+
+    verify: `You are a code verification agent. Do NOT spawn sub-agents.
+
+PROJECT: ${project.repo_path}
+TASK: ${task.title}
+
+SPEC:
+${task.spec}
+
+PREVIOUS STEP OUTPUT:
+${previousOutput || 'N/A'}
+
+INSTRUCTIONS:
+1. Review the code changes on branch task-${task.id}-implement
+2. Check: Does the code match the spec? Are there bugs? Missing error handling? ID mismatches?
+3. If issues found: fix them and commit
+4. ${callbackInstructions}`,
+
+    test: `You are a testing agent. Do NOT spawn sub-agents.
+
+PROJECT: ${project.repo_path}
+TASK: ${task.title}
+
+SPEC:
+${task.spec}
+
+PREVIOUS STEP OUTPUT:
+${previousOutput || 'N/A'}
+
+INSTRUCTIONS:
+1. Review the implemented code on branch task-${task.id}-implement
+2. Test the changes: start the server if needed, hit API endpoints, verify responses
+3. Check for regressions in existing functionality
+4. ${callbackInstructions}`,
+
+    deploy: `You are a deployment agent. Do NOT spawn sub-agents.
+
+PROJECT: ${project.repo_path}
+TASK: ${task.title}
+
+INSTRUCTIONS:
+1. Merge branch task-${task.id}-implement into main
+2. Run any database migrations if needed
+3. Restart the PM2 process for this project
+4. Verify the app starts successfully
+5. Clean up the worktree branch
+6. ${callbackInstructions}`
+  };
+
+  let prompt = templates[stage];
+  if (errorContext) {
+    prompt += `\n\nPREVIOUS ERROR:\n${errorContext}`;
+  }
+
+  return prompt;
+}
+
+async function startPipelineStep(taskId, stage, options = {}) {
+  const task = hiveDb.prepare(`
+    SELECT t.*, p.repo_path
+    FROM tasks t
+    JOIN projects p ON p.id = t.project_id
+    WHERE t.id = ?
+  `).get(taskId);
+
+  if (!task) {
+    throw new Error('task not found');
+  }
+
+  const previousRun = hiveDb.prepare(`
+    SELECT * FROM pipeline_runs
+    WHERE task_id = ?
+    ORDER BY id DESC LIMIT 1
+  `).get(taskId);
+
+  const runInsert = hiveDb.prepare(`
+    INSERT INTO pipeline_runs (task_id, stage, status)
+    VALUES (?, ?, 'running')
+  `).run(taskId, stage);
+
+  const runId = runInsert.lastInsertRowid;
+  logStep(runId, 'info', `Step started: ${stage}`);
+
+  hiveDb.prepare(`
+    UPDATE tasks
+    SET status = 'running',
+        stage = ?,
+        started_at = COALESCE(started_at, datetime('now')),
+        updated_at = datetime('now')
+    WHERE id = ?
+  `).run(stage, taskId);
+
+  const taskPrompt = buildAgentPrompt(task, { repo_path: task.repo_path }, stage, previousRun?.output, options.errorContext);
+
+  let spawnResult = null;
+  try {
+    spawnResult = await spawnAgent(taskPrompt, taskId, stage);
+    const sessionKey = spawnResult?.sessionKey || spawnResult?.key || spawnResult?.session?.key || null;
+    if (sessionKey) {
+      hiveDb.prepare(`
+        UPDATE pipeline_runs
+        SET agent_session_key = ?
+        WHERE id = ?
+      `).run(sessionKey, runId);
+    }
+    logStep(runId, 'info', `Agent spawned for ${stage}`);
+  } catch (err) {
+    logStep(runId, 'error', `Agent spawn failed: ${err.message}`);
+    throw err;
+  }
+
+  return { runId, spawnResult };
+}
+
 app.get('/api/hive/projects', requireAuth, (req, res) => {
   try {
     const projects = hiveDb.prepare('SELECT * FROM projects ORDER BY id ASC').all();
@@ -735,7 +927,7 @@ app.delete('/api/hive/tasks/:id', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/hive/tasks/:id/greenlight', requireAuth, (req, res) => {
+app.post('/api/hive/tasks/:id/greenlight', requireAuth, async (req, res) => {
   try {
     const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
     if (!task) return res.status(404).json({ error: 'task not found' });
@@ -747,17 +939,9 @@ app.post('/api/hive/tasks/:id/greenlight', requireAuth, (req, res) => {
 
     if (newGreenlit) {
       if (task.auto_run) {
-        if (task.stage === 'plan') nextStage = 'implement';
         nextStatus = 'running';
+        nextStage = 'implement';
         if (!startedAt) startedAt = new Date().toISOString();
-
-        const existingRun = hiveDb.prepare('SELECT id FROM pipeline_runs WHERE task_id = ? ORDER BY id DESC LIMIT 1').get(task.id);
-        if (!existingRun) {
-          hiveDb.prepare(`
-            INSERT INTO pipeline_runs (task_id, stage, status)
-            VALUES (?, ?, 'running')
-          `).run(task.id, nextStage);
-        }
       } else {
         nextStatus = 'greenlit';
       }
@@ -775,11 +959,17 @@ app.post('/api/hive/tasks/:id/greenlight', requireAuth, (req, res) => {
       WHERE id = ?
     `).run(newGreenlit, nextStatus, nextStage, startedAt, task.id);
 
+    if (newGreenlit && task.auto_run) {
+      await startPipelineStep(task.id, 'implement');
+    }
+
     const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
     res.json({ task: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
 });
 
 app.post('/api/hive/tasks/:id/pause', requireAuth, (req, res) => {
@@ -821,7 +1011,7 @@ app.post('/api/hive/tasks/:id/retry', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/hive/pipeline/:taskId/advance', requireAuth, (req, res) => {
+app.post('/api/hive/pipeline/:taskId/advance', requireAuth, async (req, res) => {
   try {
     const { output } = req.body || {};
     const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.taskId);
@@ -845,7 +1035,11 @@ app.post('/api/hive/pipeline/:taskId/advance', requireAuth, (req, res) => {
       WHERE id = ?
     `).run(output || null, currentRun.id);
 
-    if (currentStage === 'deploy') {
+    logStep(currentRun.id, 'success', `Step completed: ${currentStage}`);
+
+    const nextStage = getNextPipelineStage(currentStage);
+
+    if (!nextStage || nextStage === 'done') {
       hiveDb.prepare(`
         UPDATE tasks
         SET status = 'done',
@@ -859,21 +1053,7 @@ app.post('/api/hive/pipeline/:taskId/advance', requireAuth, (req, res) => {
       return res.json({ task: updated, done: true });
     }
 
-    const nextStage = getNextStage(currentStage) || 'done';
-
-    hiveDb.prepare(`
-      UPDATE tasks
-      SET stage = ?,
-          status = 'running',
-          started_at = COALESCE(started_at, datetime('now')),
-          updated_at = datetime('now')
-      WHERE id = ?
-    `).run(nextStage, task.id);
-
-    hiveDb.prepare(`
-      INSERT INTO pipeline_runs (task_id, stage, status)
-      VALUES (?, ?, 'running')
-    `).run(task.id, nextStage);
+    await startPipelineStep(task.id, nextStage);
 
     const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
     res.json({ task: updated, next_stage: nextStage });
@@ -882,7 +1062,7 @@ app.post('/api/hive/pipeline/:taskId/advance', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/hive/pipeline/:taskId/fail', requireAuth, (req, res) => {
+app.post('/api/hive/pipeline/:taskId/fail', requireAuth, async (req, res) => {
   try {
     const { error } = req.body || {};
     const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.taskId);
@@ -905,6 +1085,25 @@ app.post('/api/hive/pipeline/:taskId/fail', requireAuth, (req, res) => {
           error = COALESCE(?, error)
       WHERE id = ?
     `).run(error || null, currentRun.id);
+
+    logStep(currentRun.id, 'error', `Step failed: ${currentStage} - ${error || 'unknown error'}`);
+
+    if (task.retry_count < task.max_retries) {
+      hiveDb.prepare(`
+        UPDATE tasks
+        SET retry_count = retry_count + 1,
+            status = 'running',
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(task.id);
+
+      logStep(currentRun.id, 'warn', `Retrying step ${currentStage} (${task.retry_count + 1}/${task.max_retries})`);
+
+      await startPipelineStep(task.id, currentStage, { errorContext: error || 'Unknown error' });
+
+      const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+      return res.json({ task: updated, retrying: true });
+    }
 
     hiveDb.prepare(`
       UPDATE tasks
