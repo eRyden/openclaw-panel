@@ -478,7 +478,7 @@ window.projects = {
           </div>
         ` : subtasksSection}
 
-        ${hasSubtasks ? '' : `
+        ${hasSubtasks || status === 'plan' ? '' : `
           <div class="mb-6">
             <h4 class="text-sm font-semibold text-slate-200 mb-3">Pipeline Timeline</h4>
             ${this.renderTimeline(task)}
