@@ -233,7 +233,7 @@ window.projects = {
     const isSubtask = !!task.parent_id;
     const parentTitle = isSubtask && taskMap ? taskMap[task.parent_id]?.title : null;
     const displayProjectName = isSubtask ? (parentTitle || projectName) : projectName;
-    const taskTypeBadge = task.task_type === 'creative'
+    const taskTypeBadge = !isSubtask && task.task_type === 'creative'
       ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-600/20 text-purple-300 border border-purple-500/30">creative</span>'
       : '';
 
@@ -587,7 +587,7 @@ window.projects = {
     }, 300);
   },
 
-  async showNewTaskModal() {
+  async showNewTaskModal(parentId) {
     const projects = await this.fetchProjects();
     const modal = document.createElement('div');
     modal.id = 'hive-task-modal';
@@ -628,7 +628,7 @@ window.projects = {
               <option value="urgent">Urgent</option>
             </select>
           </div>
-          <div>
+          <div id="hive-task-type-wrap">
             <label class="block text-sm text-slate-300 mb-1">Task Type</label>
             <select id="hive-task-type" class="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-200">
               <option value="code" selected>Code</option>
@@ -657,6 +657,11 @@ window.projects = {
           projectSelect.value = projectSelect.options[0].value;
         }
       }
+    }
+
+    const taskTypeWrap = document.getElementById('hive-task-type-wrap');
+    if (taskTypeWrap && parentId) {
+      taskTypeWrap.classList.add('hidden');
     }
 
     if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -904,7 +909,7 @@ window.showTaskDetail = (taskId) => window.projects.showTaskDetail(taskId);
 window.greenlightTask = (taskId) => window.projects.greenlightTask(taskId);
 window.pauseTask = (taskId) => window.projects.pauseTask(taskId);
 window.retryTask = (taskId) => window.projects.retryTask(taskId);
-window.showNewTaskModal = () => window.projects.showNewTaskModal();
+window.showNewTaskModal = (parentId) => window.projects.showNewTaskModal(parentId);
 window.showNewProjectModal = () => window.projects.showNewProjectModal();
 window.createTask = () => {
   const data = {
@@ -914,6 +919,7 @@ window.createTask = () => {
     priority: document.getElementById('hive-task-priority')?.value,
     task_type: document.getElementById('hive-task-type')?.value
   };
+  if (data.parent_id) delete data.task_type;
   window.projects.createTask(data);
   closeHiveModal();
 };
