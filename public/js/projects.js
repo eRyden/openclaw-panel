@@ -429,7 +429,6 @@ window.projects = {
             <div class="flex items-center justify-between gap-2 bg-slate-950/40 border border-slate-800 rounded-lg px-3 py-2 text-xs">
               <span class="text-slate-200">${subtask.title || 'Untitled'}</span>
               <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 rounded-full border ${statusClass}">${statusLabel}</span>
                 <span class="px-2 py-0.5 rounded-full border ${stageClass}">${stageLabel}</span>
               </div>
             </div>
