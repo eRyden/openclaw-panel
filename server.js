@@ -5,6 +5,7 @@ const path = require('path');
 const session = require('express-session');
 const fs = require('fs');
 const crypto = require('crypto');
+const Database = require('better-sqlite3');
 
 // Load config.json with fallback to defaults
 let config = {};
@@ -25,6 +26,15 @@ const SESSION_SECRET = process.env.SESSION_SECRET || 'openclaw-panel-' + Date.no
 // Panel configuration
 const PANEL_NAME = config.panelName || process.env.PANEL_NAME || 'Control Center';
 const PANEL_ICON = config.panelIcon || process.env.PANEL_ICON || 'atom';
+
+// Hive database
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+const hiveDbPath = path.join(dataDir, 'hive.db');
+const hiveDb = new Database(hiveDbPath);
+hiveDb.pragma('journal_mode = WAL');
 
 // Middleware
 app.use(express.json());
@@ -545,6 +555,446 @@ app.post('/api/backup', requireAuth, async (req, res) => {
     });
 
     res.json({ success: true, message: 'Backup completed', output: result.stdout });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ HIVE API ============
+const HIVE_STAGES = ['plan', 'implement', 'verify', 'test', 'deploy', 'done'];
+
+function getNextStage(stage) {
+  const idx = HIVE_STAGES.indexOf(stage);
+  if (idx === -1) return null;
+  return HIVE_STAGES[idx + 1] || null;
+}
+
+app.get('/api/hive/projects', requireAuth, (req, res) => {
+  try {
+    const projects = hiveDb.prepare('SELECT * FROM projects ORDER BY id ASC').all();
+    res.json({ projects });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/hive/projects', requireAuth, (req, res) => {
+  try {
+    const { name, description, repo_path } = req.body || {};
+    if (!name) return res.status(400).json({ error: 'name is required' });
+
+    const stmt = hiveDb.prepare('INSERT INTO projects (name, description, repo_path) VALUES (?, ?, ?)');
+    const result = stmt.run(name, description || null, repo_path || null);
+    const project = hiveDb.prepare('SELECT * FROM projects WHERE id = ?').get(result.lastInsertRowid);
+    res.json({ project });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/hive/projects/:id', requireAuth, (req, res) => {
+  try {
+    const { name, description, repo_path } = req.body || {};
+    const existing = hiveDb.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'project not found' });
+
+    hiveDb.prepare(`
+      UPDATE projects
+      SET name = COALESCE(?, name),
+          description = COALESCE(?, description),
+          repo_path = COALESCE(?, repo_path),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(name, description, repo_path, req.params.id);
+
+    const project = hiveDb.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+    res.json({ project });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/hive/projects/:id', requireAuth, (req, res) => {
+  try {
+    const existing = hiveDb.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'project not found' });
+
+    const taskCount = hiveDb.prepare('SELECT COUNT(1) as count FROM tasks WHERE project_id = ?').get(req.params.id);
+    if (taskCount.count > 0) {
+      return res.status(400).json({ error: 'project has tasks' });
+    }
+
+    hiveDb.prepare('DELETE FROM projects WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/hive/tasks', requireAuth, (req, res) => {
+  try {
+    const filters = [];
+    const params = [];
+    if (req.query.project_id) {
+      filters.push('project_id = ?');
+      params.push(req.query.project_id);
+    }
+    if (req.query.status) {
+      filters.push('status = ?');
+      params.push(req.query.status);
+    }
+    if (req.query.stage) {
+      filters.push('stage = ?');
+      params.push(req.query.stage);
+    }
+
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const tasks = hiveDb.prepare(`SELECT * FROM tasks ${where} ORDER BY created_at DESC`).all(...params);
+    res.json({ tasks });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/hive/tasks/:id', requireAuth, (req, res) => {
+  try {
+    const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    if (!task) return res.status(404).json({ error: 'task not found' });
+
+    const runs = hiveDb.prepare('SELECT * FROM pipeline_runs WHERE task_id = ? ORDER BY id ASC').all(req.params.id);
+    let stepLogs = [];
+    if (runs.length > 0) {
+      const runIds = runs.map(r => r.id);
+      const placeholders = runIds.map(() => '?').join(',');
+      stepLogs = hiveDb.prepare(`SELECT * FROM step_logs WHERE run_id IN (${placeholders}) ORDER BY id ASC`).all(...runIds);
+    }
+
+    res.json({ task, pipeline_runs: runs, step_logs: stepLogs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/hive/tasks', requireAuth, (req, res) => {
+  try {
+    const { project_id, title, spec, priority } = req.body || {};
+    if (!project_id || !title) {
+      return res.status(400).json({ error: 'project_id and title are required' });
+    }
+
+    const stmt = hiveDb.prepare(`
+      INSERT INTO tasks (project_id, title, spec, priority)
+      VALUES (?, ?, ?, ?)
+    `);
+    const result = stmt.run(project_id, title, spec || null, priority || 'normal');
+    const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
+    res.json({ task });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/hive/tasks/:id', requireAuth, (req, res) => {
+  try {
+    const { title, spec, priority } = req.body || {};
+    const existing = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'task not found' });
+
+    hiveDb.prepare(`
+      UPDATE tasks
+      SET title = COALESCE(?, title),
+          spec = COALESCE(?, spec),
+          priority = COALESCE(?, priority),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(title, spec, priority, req.params.id);
+
+    const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    res.json({ task });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/hive/tasks/:id', requireAuth, (req, res) => {
+  try {
+    const existing = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'task not found' });
+
+    const runIds = hiveDb.prepare('SELECT id FROM pipeline_runs WHERE task_id = ?').all(req.params.id).map(r => r.id);
+    if (runIds.length > 0) {
+      const placeholders = runIds.map(() => '?').join(',');
+      hiveDb.prepare(`DELETE FROM step_logs WHERE run_id IN (${placeholders})`).run(...runIds);
+    }
+    hiveDb.prepare('DELETE FROM pipeline_runs WHERE task_id = ?').run(req.params.id);
+    hiveDb.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/hive/tasks/:id/greenlight', requireAuth, (req, res) => {
+  try {
+    const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    if (!task) return res.status(404).json({ error: 'task not found' });
+
+    const newGreenlit = task.greenlit ? 0 : 1;
+    let nextStatus = task.status;
+    let nextStage = task.stage;
+    let startedAt = task.started_at;
+
+    if (newGreenlit) {
+      if (task.auto_run) {
+        if (task.stage === 'plan') nextStage = 'implement';
+        nextStatus = 'running';
+        if (!startedAt) startedAt = new Date().toISOString();
+
+        const existingRun = hiveDb.prepare('SELECT id FROM pipeline_runs WHERE task_id = ? ORDER BY id DESC LIMIT 1').get(task.id);
+        if (!existingRun) {
+          hiveDb.prepare(`
+            INSERT INTO pipeline_runs (task_id, stage, status)
+            VALUES (?, ?, 'running')
+          `).run(task.id, nextStage);
+        }
+      } else {
+        nextStatus = 'greenlit';
+      }
+    } else {
+      if (task.status === 'greenlit') nextStatus = 'plan';
+    }
+
+    hiveDb.prepare(`
+      UPDATE tasks
+      SET greenlit = ?,
+          status = ?,
+          stage = ?,
+          started_at = COALESCE(?, started_at),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(newGreenlit, nextStatus, nextStage, startedAt, task.id);
+
+    const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+    res.json({ task: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/hive/tasks/:id/pause', requireAuth, (req, res) => {
+  try {
+    const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    if (!task) return res.status(404).json({ error: 'task not found' });
+
+    hiveDb.prepare(`
+      UPDATE tasks
+      SET status = 'paused', updated_at = datetime('now')
+      WHERE id = ?
+    `).run(req.params.id);
+
+    const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    res.json({ task: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/hive/tasks/:id/retry', requireAuth, (req, res) => {
+  try {
+    const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    if (!task) return res.status(404).json({ error: 'task not found' });
+
+    hiveDb.prepare(`
+      UPDATE tasks
+      SET status = 'greenlit',
+          greenlit = 1,
+          retry_count = retry_count + 1,
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(req.params.id);
+
+    const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
+    res.json({ task: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/hive/pipeline/:taskId/advance', requireAuth, (req, res) => {
+  try {
+    const { output } = req.body || {};
+    const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.taskId);
+    if (!task) return res.status(404).json({ error: 'task not found' });
+
+    const currentStage = task.stage;
+    const currentRun = hiveDb.prepare(`
+      SELECT * FROM pipeline_runs
+      WHERE task_id = ? AND stage = ?
+      ORDER BY id DESC LIMIT 1
+    `).get(task.id, currentStage);
+
+    if (!currentRun) return res.status(404).json({ error: 'current pipeline run not found' });
+
+    hiveDb.prepare(`
+      UPDATE pipeline_runs
+      SET status = 'passed',
+          completed_at = datetime('now'),
+          duration_ms = CAST((julianday('now') - julianday(started_at)) * 86400000 AS INTEGER),
+          output = COALESCE(?, output)
+      WHERE id = ?
+    `).run(output || null, currentRun.id);
+
+    if (currentStage === 'deploy') {
+      hiveDb.prepare(`
+        UPDATE tasks
+        SET status = 'done',
+            stage = 'done',
+            completed_at = datetime('now'),
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(task.id);
+
+      const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+      return res.json({ task: updated, done: true });
+    }
+
+    const nextStage = getNextStage(currentStage) || 'done';
+
+    hiveDb.prepare(`
+      UPDATE tasks
+      SET stage = ?,
+          status = 'running',
+          started_at = COALESCE(started_at, datetime('now')),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(nextStage, task.id);
+
+    hiveDb.prepare(`
+      INSERT INTO pipeline_runs (task_id, stage, status)
+      VALUES (?, ?, 'running')
+    `).run(task.id, nextStage);
+
+    const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+    res.json({ task: updated, next_stage: nextStage });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/hive/pipeline/:taskId/fail', requireAuth, (req, res) => {
+  try {
+    const { error } = req.body || {};
+    const task = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.taskId);
+    if (!task) return res.status(404).json({ error: 'task not found' });
+
+    const currentStage = task.stage;
+    const currentRun = hiveDb.prepare(`
+      SELECT * FROM pipeline_runs
+      WHERE task_id = ? AND stage = ?
+      ORDER BY id DESC LIMIT 1
+    `).get(task.id, currentStage);
+
+    if (!currentRun) return res.status(404).json({ error: 'current pipeline run not found' });
+
+    hiveDb.prepare(`
+      UPDATE pipeline_runs
+      SET status = 'failed',
+          completed_at = datetime('now'),
+          duration_ms = CAST((julianday('now') - julianday(started_at)) * 86400000 AS INTEGER),
+          error = COALESCE(?, error)
+      WHERE id = ?
+    `).run(error || null, currentRun.id);
+
+    hiveDb.prepare(`
+      UPDATE tasks
+      SET status = 'failed',
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).run(task.id);
+
+    const updated = hiveDb.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id);
+    res.json({ task: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/hive/dashboard', requireAuth, (req, res) => {
+  try {
+    const projects = hiveDb.prepare('SELECT id, name FROM projects ORDER BY name ASC').all();
+    const tasks = hiveDb.prepare(`
+      SELECT
+        t.id,
+        t.title,
+        t.project_id,
+        p.name AS project_name,
+        t.status,
+        t.stage,
+        t.priority,
+        t.greenlit,
+        t.created_at,
+        t.started_at,
+        t.completed_at,
+        pr.id AS run_id,
+        pr.stage AS run_stage,
+        pr.status AS run_status,
+        pr.started_at AS run_started_at,
+        pr.completed_at AS run_completed_at,
+        pr.duration_ms AS run_duration_ms,
+        pr.error AS run_error,
+        pr.output AS run_output
+      FROM tasks t
+      JOIN projects p ON p.id = t.project_id
+      LEFT JOIN pipeline_runs pr ON pr.id = (
+        SELECT id FROM pipeline_runs WHERE task_id = t.id ORDER BY id DESC LIMIT 1
+      )
+      ORDER BY t.created_at DESC
+    `).all();
+
+    const stages = {
+      plan: [],
+      implement: [],
+      verify: [],
+      test: [],
+      deploy: [],
+      done: []
+    };
+
+    tasks.forEach(task => {
+      const latestRun = task.run_id ? {
+        id: task.run_id,
+        stage: task.run_stage,
+        status: task.run_status,
+        started_at: task.run_started_at,
+        completed_at: task.run_completed_at,
+        duration_ms: task.run_duration_ms,
+        error: task.run_error,
+        output: task.run_output
+      } : null;
+
+      const formatted = {
+        id: task.id,
+        title: task.title,
+        project_id: task.project_id,
+        project_name: task.project_name,
+        status: task.status,
+        stage: task.stage,
+        priority: task.priority,
+        greenlit: task.greenlit,
+        created_at: task.created_at,
+        started_at: task.started_at,
+        completed_at: task.completed_at,
+        latest_run: latestRun
+      };
+
+      if (!stages[task.stage]) stages[task.stage] = [];
+      stages[task.stage].push(formatted);
+    });
+
+    const counts = Object.fromEntries(Object.keys(stages).map(stage => [stage, stages[stage].length]));
+
+    res.json({ stages, counts, projects });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
